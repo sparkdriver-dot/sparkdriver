@@ -33807,12 +33807,11 @@ const ScannerScreen = ({ order: e, quantities: t, setFlow: r }) => {
       };
     React.useEffect(() => {
       let g = !0;
-      if (config.authMode === "local") { c("Demo scanner — click to simulate a scan."); return; }
       return (
         (async () => {
           var y;
           if (!((y = navigator.mediaDevices) != null && y.getUserMedia)) {
-            c("Camera is not available on this device.");
+            c("La cámara no está disponible en este dispositivo.");
             return;
           }
           try {
@@ -33830,7 +33829,7 @@ const ScannerScreen = ({ order: e, quantities: t, setFlow: r }) => {
                 await u.current.play().catch(() => {})),
               c(""));
           } catch {
-            c("Allow camera access to scan items.");
+            c("Permite el acceso a la cámara para ver la imagen en vivo.");
           }
         })(),
         () => {
@@ -33863,6 +33862,10 @@ const ScannerScreen = ({ order: e, quantities: t, setFlow: r }) => {
             "app-gradient flex min-h-screen flex-col px-7 text-primary-foreground",
           children: [
             jsxRuntime.jsx(TopSpacer, {}),
+            jsxRuntime.jsx("p", {
+              style: { alignSelf: "flex-start", marginTop: 8, padding: "4px 10px", borderRadius: 999, background: "#ffffff26", fontSize: 12, fontWeight: 700 },
+              children: "Modo demo · avance manual",
+            }),
             jsxRuntime.jsxs("div", {
               className: "mt-16",
               children: [
@@ -33903,6 +33906,10 @@ const ScannerScreen = ({ order: e, quantities: t, setFlow: r }) => {
             "app-gradient flex min-h-screen flex-col px-7 text-primary-foreground",
           children: [
             jsxRuntime.jsx(TopSpacer, {}),
+            jsxRuntime.jsx("p", {
+              style: { alignSelf: "flex-start", marginTop: 8, padding: "4px 10px", borderRadius: 999, background: "#ffffff26", fontSize: 12, fontWeight: 700 },
+              children: "Modo demo · avance manual",
+            }),
             jsxRuntime.jsxs("div", {
               className: "mt-2 flex justify-between",
               children: [
@@ -33956,12 +33963,6 @@ const ScannerScreen = ({ order: e, quantities: t, setFlow: r }) => {
                     playsInline: !0,
                     "aria-label": "Camera scanner preview",
                   }),
-                  l &&
-                    jsxRuntime.jsx("div", {
-                      className:
-                        "absolute inset-0 grid place-items-center bg-scanner px-6 text-center font-bold text-primary-foreground/80",
-                      children: l,
-                    }),
                   jsxRuntime.jsxs("div", {
                     className:
                       "absolute inset-8 rounded-2xl border-4 border-primary-foreground/90",
@@ -33978,6 +33979,11 @@ const ScannerScreen = ({ order: e, quantities: t, setFlow: r }) => {
                   }),
                 ],
               }),
+            }),
+            l && jsxRuntime.jsx("p", {
+              role: "alert",
+              style: { marginTop: 12, textAlign: "center", fontSize: 14 },
+              children: l,
             }),
             jsxRuntime.jsxs("div", {
               className: "mt-auto pb-12 text-center",
