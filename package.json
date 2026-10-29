@@ -1,0 +1,17 @@
+{
+  "name": "spark-driver-reconstructed",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Editable recovery of the owner-provided Spark Driver web application",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "start": "node scripts/serve.mjs",
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/serve.mjs --dist",
+    "test": "node --test scripts/verify.test.mjs"
+  }
+}
