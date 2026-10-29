@@ -32559,73 +32559,6 @@ function NewItemForm({ items, onAddItem }) {
       editorElement('button',{type:'submit',style:editorButtonStyle},'Save item')));
 }
 
-const cameraElement = React.createElement;
-
-/** Live camera preview only: no barcode recognition or purchase verification. */
-function CameraPreviewScreen({ order, setFlow }) {
-  const videoRef = React.useRef(null);
-  const [attempt, setAttempt] = React.useState(0);
-  const [status, setStatus] = React.useState('Opening camera…');
-  const [error, setError] = React.useState('');
-  React.useEffect(() => {
-    let active = true;
-    let stream = null;
-    setError('');
-    setStatus('Opening camera…');
-    const open = async () => {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setError('Camera is not available. Open this page in a supported browser using HTTPS.');
-        return;
-      }
-      try {
-        const requested = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-        if (!active) { requested.getTracks().forEach(track => track.stop()); return; }
-        stream = requested;
-        const video = videoRef.current;
-        if (video) {
-          video.srcObject = stream;
-          await video.play();
-        }
-        if (active) setStatus('Live camera view');
-      } catch (problem) {
-        stream?.getTracks().forEach(track => track.stop());
-        stream = null;
-        if (!active) return;
-        const denied = problem.name === 'NotAllowedError' || problem.name === 'PermissionDeniedError';
-        setError(denied ? 'Camera permission denied. Allow camera access in your browser settings.' : 'Unable to open the camera. Check that it is connected and not in use by another app.');
-      }
-    };
-    open();
-    return () => {
-      active = false;
-      stream?.getTracks().forEach(track => track.stop());
-      if (videoRef.current?.srcObject === stream) videoRef.current.srcObject = null;
-    };
-  }, [attempt]);
-  return cameraElement('main', {
-    className: 'app-gradient flex min-h-screen flex-col px-7 text-primary-foreground',
-    style: { paddingTop: 44, paddingBottom: 32, minHeight: '100dvh' }
-  },
-    cameraElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 } },
-      cameraElement('div', null,
-        cameraElement('p', { style: { fontSize: 18 } }, 'Camera preview'),
-        cameraElement('h1', { className: 'text-xl font-black', style: { marginTop: 2 } }, order.items[0]?.name || order.customer),
-        cameraElement('p', { style: { marginTop: 4, fontWeight: 700, opacity: 0.6 } }, order.id)),
-      cameraElement('span', { style: { padding: '12px 18px', borderRadius: 999, fontWeight: 800, background: '#ffffff26' } }, status === 'Live camera view' && !error ? 'Live' : 'Camera')),
-    cameraElement('div', {
-      style: { position: 'relative', width: 288, maxWidth: '100%', height: 320, flexShrink: 0, margin: '80px auto 24px', overflow: 'hidden', background: '#000', border: '2px solid #ffffff40', borderRadius: 32, boxShadow: '0 12px 28px #00377a40' }
-    },
-      cameraElement('video', { ref: videoRef, autoPlay: true, muted: true, playsInline: true, 'aria-label': 'Live camera preview', style: { width: '100%', height: '100%', objectFit: 'cover' } }),
-      error && cameraElement('div', { role: 'alert', style: { position: 'absolute', inset: 0, display: 'grid', placeContent: 'center', padding: 24, textAlign: 'center', background: '#111', color: '#fff', zIndex: 2 } },
-        cameraElement('p', null, error),
-        cameraElement('button', { type: 'button', onClick: () => setAttempt(value => value + 1), style: { marginTop: 20, padding: 12, borderRadius: 12, background: '#0067d6', color: '#fff' } }, 'Try again')),
-      cameraElement('div', { 'aria-hidden': true, style: { position: 'absolute', inset: 32, border: '4px solid #ffffffe6', borderRadius: 16, pointerEvents: 'none' } })),
-    cameraElement('div', { style: { marginTop: 'auto', paddingTop: 28, textAlign: 'center' } },
-      cameraElement('p', { role: 'status', style: { fontSize: 20 } }, error ? 'Camera unavailable' : status),
-      cameraElement('p', { style: { marginTop: 8, opacity: 0.65 } }, 'Live camera preview'),
-      cameraElement('button', { type: 'button', onClick: () => setFlow('detail'), style: { marginTop: 24, padding: '10px 20px', fontWeight: 700, textDecoration: 'underline', color: '#fff' } }, 'Back to order')));
-}
-
 /** Reconstructed React application. See README.md for recovery scope. */
 const authClient = createAuthClient(null, config);
 
@@ -33581,7 +33514,7 @@ const DeliveryDetails = ({
                 size: "driver",
                 onClick: () => n(s ? "pass" : "scanner"),
                 disabled: !s && countItems(e, t) === 0,
-                children: s ? "Return" : "Open Camera",
+                children: s ? "Return" : "Start Scanning",
               }),
             ],
           }),
@@ -33857,7 +33790,221 @@ const ItemsList = ({ items: e, quantities: t, setQuantities: r }) => {
   });
 };
 
-const ScannerScreen = CameraPreviewScreen;
+const ScannerScreen = ({ order: e, quantities: t, setFlow: r }) => {
+    var x;
+    const n = createScanPlan(e.items, t),
+      [s, i] = React.useState(0),
+      [o, a] = React.useState(!1),
+      [l, c] = React.useState(""),
+      u = React.useRef(null),
+      d = React.useRef(null),
+      f = n.stepAt(s),
+      h = (g) => {
+        ((u.current = g),
+          g &&
+            d.current &&
+            ((g.srcObject = d.current), g.play().catch(() => {})));
+      };
+    React.useEffect(() => {
+      let g = !0;
+      if (config.authMode === "local") { c("Demo scanner — click to simulate a scan."); return; }
+      return (
+        (async () => {
+          var y;
+          if (!((y = navigator.mediaDevices) != null && y.getUserMedia)) {
+            c("Camera is not available on this device.");
+            return;
+          }
+          try {
+            const _ = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { ideal: "environment" } },
+              audio: !1,
+            });
+            if (!g) {
+              _.getTracks().forEach((k) => k.stop());
+              return;
+            }
+            ((d.current = _),
+              u.current &&
+                ((u.current.srcObject = _),
+                await u.current.play().catch(() => {})),
+              c(""));
+          } catch {
+            c("Allow camera access to scan items.");
+          }
+        })(),
+        () => {
+          var y;
+          ((g = !1),
+            (y = d.current) == null || y.getTracks().forEach((_) => _.stop()),
+            (d.current = null));
+        }
+      );
+    }, []);
+    const w = () => {
+        const g = (f == null ? void 0 : f.pass) === 1,
+          m = s + 1 >= n.length;
+        if (g) {
+          a(!0);
+          return;
+        }
+        if (m) {
+          (i(n.length), r("finished"));
+          return;
+        }
+        i((y) => y + 1);
+      },
+      v = () => {
+        (a(!1), i(s + 1));
+      };
+    return o
+      ? jsxRuntime.jsxs("main", {
+          className:
+            "app-gradient flex min-h-screen flex-col px-7 text-primary-foreground",
+          children: [
+            jsxRuntime.jsx(TopSpacer, {}),
+            jsxRuntime.jsxs("div", {
+              className: "mt-16",
+              children: [
+                jsxRuntime.jsx(CheckIcon, {
+                  className:
+                    "h-20 w-20 rounded-full bg-success/20 p-4 text-success",
+                }),
+                jsxRuntime.jsx("h1", {
+                  className: "mt-10 text-4xl font-black",
+                  children: "Thank you!",
+                }),
+                jsxRuntime.jsx("p", {
+                  className:
+                    "mt-5 text-2xl leading-snug text-primary-foreground/80",
+                  children: "Item barcode accepted.",
+                }),
+                jsxRuntime.jsxs("p", {
+                  className: "mt-8 text-xl text-primary-foreground/60",
+                  children: [
+                    "Now scan the serial number for ",
+                    f == null ? void 0 : f.name,
+                    ".",
+                  ],
+                }),
+              ],
+            }),
+            jsxRuntime.jsx(Button, {
+              variant: "success",
+              size: "driver",
+              className: "mt-auto mb-10 w-full",
+              onClick: v,
+              children: "SCAN SERIAL NUMBER",
+            }),
+          ],
+        })
+      : jsxRuntime.jsxs("main", {
+          className:
+            "app-gradient flex min-h-screen flex-col px-7 text-primary-foreground",
+          children: [
+            jsxRuntime.jsx(TopSpacer, {}),
+            jsxRuntime.jsxs("div", {
+              className: "mt-2 flex justify-between",
+              children: [
+                jsxRuntime.jsxs("div", {
+                  children: [
+                    jsxRuntime.jsx("p", {
+                      className: "text-lg",
+                      children:
+                        (f == null ? void 0 : f.pass) === 2
+                          ? "Scanning Serial Number"
+                          : "Scanning Barcode",
+                    }),
+                    jsxRuntime.jsx("h1", {
+                      className: "text-xl font-black",
+                      children:
+                        (f == null ? void 0 : f.name) ||
+                        ((x = e.items[0]) == null ? void 0 : x.name),
+                    }),
+                    jsxRuntime.jsxs("p", {
+                      className: "mt-1 font-bold text-primary-foreground/60",
+                      children: [
+                        (f == null ? void 0 : f.pass) === 2
+                          ? "Serial number scan"
+                          : "Item barcode scan",
+                        " · Scan ",
+                        (f == null ? void 0 : f.pass) || 1,
+                        " of 2",
+                      ],
+                    }),
+                  ],
+                }),
+                jsxRuntime.jsxs("span", {
+                  className:
+                    "rounded-full bg-primary-foreground/15 px-5 py-3 text-2xl font-black",
+                  children: [s, "/", n.length],
+                }),
+              ],
+            }),
+            jsxRuntime.jsx("button", {
+              onClick: w,
+              className:
+                "mx-auto mt-20 grid h-80 w-72 place-items-center overflow-hidden rounded-[2rem] border-2 border-primary-foreground/25 bg-scanner shadow-lift",
+              children: jsxRuntime.jsxs("div", {
+                className: "relative h-full w-full",
+                children: [
+                  jsxRuntime.jsx("video", {
+                    ref: h,
+                    className: "h-full w-full object-cover",
+                    autoPlay: !0,
+                    muted: !0,
+                    playsInline: !0,
+                    "aria-label": "Camera scanner preview",
+                  }),
+                  l &&
+                    jsxRuntime.jsx("div", {
+                      className:
+                        "absolute inset-0 grid place-items-center bg-scanner px-6 text-center font-bold text-primary-foreground/80",
+                      children: l,
+                    }),
+                  jsxRuntime.jsxs("div", {
+                    className:
+                      "absolute inset-8 rounded-2xl border-4 border-primary-foreground/90",
+                    children: [
+                      jsxRuntime.jsx(ScanLineIcon, {
+                        className:
+                          "absolute left-1/2 top-3 h-10 w-10 -translate-x-1/2 rounded-full bg-primary-foreground/20 p-2",
+                      }),
+                      jsxRuntime.jsx("span", {
+                        className:
+                          "absolute left-3 right-3 top-1/2 h-1 bg-scanner-line shadow-[0_0_22px_hsl(var(--scanner-line))] animate-scan",
+                      }),
+                    ],
+                  }),
+                ],
+              }),
+            }),
+            jsxRuntime.jsxs("div", {
+              className: "mt-auto pb-12 text-center",
+              children: [
+                jsxRuntime.jsxs("p", {
+                  className: "text-xl",
+                  children: [
+                    "Point camera at the ",
+                    (f == null ? void 0 : f.pass) === 2
+                      ? "serial number"
+                      : "item barcode",
+                  ],
+                }),
+                jsxRuntime.jsx("p", {
+                  className: "mt-2 text-primary-foreground/60",
+                  children: "Barcode first, serial number second",
+                }),
+                jsxRuntime.jsx("p", {
+                  className:
+                    "mt-5 tracking-[0.35rem] text-primary-foreground/35",
+                  children: "●●●●●●●●",
+                }),
+              ],
+            }),
+          ],
+        });
+  };
 
 const CheckoutInstructions = ({ kind: e, setFlow: t }) => {
   const r = e === "finished",
