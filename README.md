@@ -14,3 +14,5 @@ Los cambios locales no se sincronizan entre dispositivos ni modifican el reposit
 ## Publicación
 
 GitHub Pages sirve la raíz de la rama `main`. Para actualizar el sitio, reemplaza `index.html` por la nueva versión generada y guarda un commit.
+
+Las sesiones nuevas duran una hora y se cierran al vencer. Recarga el sitio para cargar esta actualización; las pestañas con el código anterior mantienen su comportamiento hasta recargar.
