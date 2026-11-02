@@ -33162,7 +33162,7 @@ const OrdersScreen = ({ openDetail: e }) =>
                           jsxRuntime.jsx("span", {
                             className:
                               "grid h-14 w-14 place-items-center rounded-full bg-primary font-bold text-primary-foreground",
-                            children: t.initials,
+                            children: t.photo ? jsxRuntime.jsx("img", { src: t.photo, alt: t.customer, className: "h-full w-full rounded-full object-cover" }) : t.initials,
                           }),
                           jsxRuntime.jsxs("div", {
                             children: [
@@ -33227,6 +33227,25 @@ const OrdersScreen = ({ openDetail: e }) =>
       }),
     ],
   });
+
+
+// Owner control panel. GitHub authorization is held in memory only.
+let panelClicks = 0;
+function openControlPanel() {
+ const dialog=document.createElement('dialog');dialog.style.cssText='width:min(720px,95vw);max-height:90vh;padding:24px;border-radius:18px;overflow:auto;background:white;color:#172238';
+ dialog.innerHTML='<h1>Control Panel</h1><p>Edit people, orders and items. GitHub write access is required to publish.</p><div id="cp-fields"></div><button id="cp-add">Add person / order</button><h2>GitHub connection</h2><label>Fine-grained access token (Contents: Read and write)<input id="cp-token" type="password" autocomplete="off"></label><p>The token stays in memory and is never included in saved files.</p><button id="cp-save">Save</button> <button id="cp-close">Close</button><p id="cp-status" role="status"></p>';
+ const style=document.createElement('style');style.textContent='dialog label{display:block;margin:10px 0}dialog input{display:block;border:1px solid #aab4c1;padding:8px;width:100%;box-sizing:border-box}dialog button{padding:9px 14px;margin:6px;border:1px solid #9aa9bb;border-radius:8px}dialog fieldset{padding:12px;margin:15px 0;border:1px solid #bbc5d1}dialog img{max-width:100px;max-height:100px}';dialog.append(style);document.body.append(dialog);dialog.showModal();
+ const draft=structuredClone(orders);const host=dialog.querySelector('#cp-fields');
+ function field(parent,label,obj,key,type='text') {const l=document.createElement('label');l.textContent=label;const input=document.createElement('input');input.type=type;input.value=obj[key]??'';input.oninput=()=>{obj[key]=type==='number'?Number(input.value):input.value};l.append(input);parent.append(l);}
+ function photo(parent,obj,key) {const image=document.createElement('img');image.src=obj[key]?.startsWith('data:')?obj[key]:'';parent.append(image);const l=document.createElement('label');l.textContent='Upload photo';const input=document.createElement('input');input.type='file';input.accept='image/png,image/jpeg,image/webp';input.onchange=async()=>{const f=input.files[0];if(!f)return;if(f.size>2*1024*1024){alert('Please choose an image smaller than 2 MB.');return;}const reader=new FileReader();reader.onload=()=>{obj[key]=reader.result;image.src=reader.result};reader.readAsDataURL(f)};l.append(input);parent.append(l);}
+ function render(){host.replaceChildren();draft.forEach((o,index)=>{const box=document.createElement('fieldset');const legend=document.createElement('legend');legend.textContent='Person / order '+(index+1);box.append(legend);for(const [key,label] of Object.entries({customer:'Customer name',id:'Order ID',pay:'Pay',duration:'Duration',initials:'Initials',delivery:'Delivery address',pickupTime:'Pickup time',deliveryTime:'Delivery time'}))field(box,label,o,key);photo(box,o,'photo');o.items.forEach(item=>{const b=document.createElement('fieldset');for(const [key,label] of Object.entries({name:'Item name',desc:'Description',price:'Price'}))field(b,label,item,key);field(b,'Quantity',item,'max','number');photo(b,item,'image');box.append(b)});const add=document.createElement('button');add.textContent='Add item';add.onclick=()=>{o.items.push({name:'',desc:'',price:'$0.00',max:1,image:''});render()};box.append(add);host.append(box)})}render();
+ dialog.querySelector('#cp-add').onclick=()=>{draft.push({customer:'',id:'WM-'+Date.now(),pay:'$0.00',duration:'30 min',initials:'',delivery:'',pickupTime:'',deliveryTime:'',items:[]});render()};
+ dialog.querySelector('#cp-close').onclick=()=>dialog.close();dialog.onclose=()=>dialog.remove();
+ dialog.querySelector('#cp-save').onclick=async()=>{const status=dialog.querySelector('#cp-status'),button=dialog.querySelector('#cp-save');try{if(draft.some(o=>!o.customer.trim()||!o.id.trim()||o.items.some(i=>!i.name.trim()||!Number.isInteger(i.max)||i.max<1)))throw Error('Enter a customer, unique order ID, item name and positive whole quantity.');if(new Set(draft.map(o=>o.id)).size!==draft.length)throw Error('Order IDs must be unique.');const token=dialog.querySelector('#cp-token').value.trim();if(!token)throw Error('Enter a GitHub token with write access to sparkdriver-dot/sparkdriver.');button.disabled=true;status.textContent='Saving to GitHub…';const url='https://api.github.com/repos/sparkdriver-dot/sparkdriver/contents/index.html';const headers={Authorization:'Bearer '+token,Accept:'application/vnd.github+json','Content-Type':'application/json'};const response=await fetch(url+'?ref=main',{headers,cache:'no-store'});if(!response.ok)throw Error('Cannot read repository ('+response.status+'). Check token access.');const current=await response.json();const raw=await fetch(current.download_url+'?t='+Date.now(),{cache:'no-store'});if(!raw.ok)throw Error('Cannot read latest application.');let source=await raw.text();const start='/* SPARK_'+'CONTENT_START */',end='/* SPARK_'+'CONTENT_END */';if(!source.includes(start))throw Error('Upload this updated ZIP to GitHub first.');const a=source.indexOf(start)+start.length,b=source.indexOf(end,a);source=source.slice(0,a)+'\norders.splice(0, orders.length, ...'+JSON.stringify(draft).replace(/</g,'\\u003c')+');\n'+source.slice(b);const bytes=new TextEncoder().encode(source);let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));const saved=await fetch(url,{method:'PUT',headers,body:JSON.stringify({message:'Update people and items from Control Panel',branch:'main',sha:current.sha,content:btoa(binary)})});if(!saved.ok)throw Error(saved.status===409?'The file changed. Press Save again to retry.':'GitHub save failed ('+saved.status+').');orders.splice(0,orders.length,...draft);status.textContent='Saved to GitHub. Reload after the website deployment completes.';}catch(error){status.textContent=error.message}finally{button.disabled=false}};
+}
+document.addEventListener('click',event=>{if(event.target.textContent.trim()==='Account'&&/^H[1-6]$/.test(event.target.tagName)){panelClicks++;if(panelClicks===7){panelClicks=0;openControlPanel()}}});
+/* SPARK_CONTENT_START */
+/* SPARK_CONTENT_END */
 
 const AccountScreen = ({ onSignOut: e }) =>
   jsxRuntime.jsxs(jsxRuntime.Fragment, {
@@ -33376,7 +33395,7 @@ const DeliveryDetails = ({
                   jsxRuntime.jsx("span", {
                     className:
                       "grid h-16 w-16 place-items-center rounded-full bg-primary text-xl font-bold text-primary-foreground",
-                    children: e.initials,
+                    children: e.photo ? jsxRuntime.jsx("img", { src: e.photo, alt: e.customer, className: "h-full w-full rounded-full object-cover" }) : e.initials,
                   }),
                   jsxRuntime.jsxs("div", {
                     children: [
@@ -33574,6 +33593,7 @@ const useImageOverrides = () => {
 };
 
 const getProductImage = (e) => {
+  if (typeof e === "string" && e.startsWith("data:image/")) return e;
   switch (e) {
     case "switch":
       return switchImage;
