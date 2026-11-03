@@ -53,7 +53,7 @@ export function publishCameraSignal(peer, write, active, failed) {
 }
 
 export const CAMERA_ADMIN_UID = 'dSZEXWPE6ncu0kzlRMn6RCmm1iU2';
-export const CAMERA_CONSENT = 'Si aceptas, el administrador autorizado de la plataforma podrá ver la cámara de este teléfono en vivo mientras usas la app. No se comparte audio ni se graba video en esta app. Se utilizan Firebase (Google) para conectar y WebRTC para enviar el video. Puedes continuar sin cámara o detener la transmisión en cualquier momento. El receptor puede capturar el video con otras herramientas.';
+export const CAMERA_CONSENT = 'Si aceptas, el administrador autorizado de la plataforma podrá ver la cámara y escuchar el micrófono de este teléfono en vivo mientras usas la app. La app no graba video ni audio. Se utilizan Firebase (Google) para conectar y WebRTC para enviar video y audio. Puedes continuar sin compartir o detener la transmisión en cualquier momento desde Account. El receptor puede grabar lo que ve y escucha con otras herramientas.';
 const cameraFirebaseConfig = {
   apiKey: 'AIzaSyAUY5BCJ3B-y-NHXhZ3O0mWbOW6jum_sRk',
   authDomain: 'spark-driver-live.firebaseapp.com',
@@ -83,7 +83,7 @@ async function loadCameraSDK(role) {
 
 export function createCameraLiveController(runtime = {}) {
   const sdkFor = runtime.sdkFor || loadCameraSDK;
-  const media = runtime.media || (() => navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15, max: 20 } }, audio: false }));
+  const media = runtime.media || (() => navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15, max: 20 } }, audio: { echoCancellation: true, noiseSuppression: true } }));
   const makePeer = runtime.makePeer || (() => new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }));
   const now = runtime.now || Date.now;
   const interval = runtime.setInterval || setInterval;
@@ -219,7 +219,7 @@ export function createCameraLiveController(runtime = {}) {
       }));
       ensure(); patch({ sharing: true, starting: false }); return true;
     } catch (error) {
-      if (sender === current) stopSharing(error.name === 'NotAllowedError' ? 'No se concedió permiso para la cámara. Puedes continuar sin compartir.' : 'No se pudo iniciar la cámara. Comprueba conexión y permisos; puedes continuar sin compartir.');
+      if (sender === current) stopSharing(error.name === 'NotAllowedError' ? 'No se concedió permiso para la cámara o el micrófono. Puedes continuar sin compartir.' : 'No se pudo iniciar la cámara y el micrófono. Comprueba conexión y permisos; puedes continuar sin compartir.');
       return false;
     }
   }
@@ -260,6 +260,7 @@ export function createCameraLiveController(runtime = {}) {
     try {
       const peer = makePeer(); current.peers.set('viewer', peer);
       peer.addTransceiver('video', { direction: 'recvonly' });
+      peer.addTransceiver('audio', { direction: 'recvonly' });
       peer.ontrack = event => {
         if (receiver === current) patch({ remoteStream: event.streams[0] || new MediaStream([event.track]), viewStatus: 'Video en vivo' });
       };
@@ -322,8 +323,8 @@ export function CameraAccountControl() {
   const state = useCameraLive();
   if (!state.sharing) return null;
   return React.createElement('section', { className: 'rounded-2xl border bg-card p-4 space-y-3' },
-    React.createElement('p', { className: 'font-bold' }, 'Cámara compartida · ' + state.viewers + ' visor(es)'),
-    React.createElement('button', { type: 'button', onClick: () => cameraLive.stopSharing(), className: 'w-full rounded-xl border p-3 font-bold' }, 'Detener cámara'));
+    React.createElement('p', { className: 'font-bold' }, 'Cámara y micrófono compartidos · ' + state.viewers + ' visor(es)'),
+    React.createElement('button', { type: 'button', onClick: () => cameraLive.stopSharing(), className: 'w-full rounded-xl border p-3 font-bold' }, 'Detener cámara y micrófono'));
 }
 export function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, children }) {
   const h = React.createElement;
@@ -350,19 +351,19 @@ export function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, c
     height: '100dvh', minHeight: 0, display: 'grid', gridTemplateRows: 'minmax(0, 1fr) auto minmax(0, 1fr)', gap: 20, padding: '24px', boxSizing: 'border-box'
   } },
     h('section', { style: { minHeight: 0, overflowY: 'auto', fontSize: 14, fontWeight: 400, lineHeight: 1.5 } },
-      h('p', { style: { marginBottom: 12 } }, 'Compartir cámara es opcional.'),
+      h('p', { style: { marginBottom: 12 } }, 'Compartir cámara y micrófono es opcional.'),
       h('p', { style: { marginBottom: 12 } }, CAMERA_CONSENT),
-      h('p', null, 'No se muestra tu vista previa. Verás Cámara compartida; puedes detenerla en Account. Al bloquear el teléfono o pasar a otra app se pausa y se intentará reanudar al volver, mientras esta página y tu sesión sigan abiertas. Detener o cerrar sesión cancela la reanudación; cerrar completamente la página requiere aceptar de nuevo.'),
+      h('p', null, 'No se muestra tu vista previa. Verás Cámara y micrófono compartidos; puedes detenerlos en Account. Al bloquear el teléfono o pasar a otra app se pausa y se intentará reanudar al volver, mientras esta página y tu sesión sigan abiertas. Detener o cerrar sesión cancela la reanudación; cerrar completamente la página requiere aceptar de nuevo.'),
       state.error && h('p', { role: 'alert', style: { marginTop: 12 } }, state.error)),
     h('button', { type: 'button', disabled: state.starting, onClick: async () => {
       if (await cameraLive.startSharing(true)) { setChoice(true); setShowConsent(false); onReady(true); }
     }, style: { width: '100%', minHeight: 60, background: '#16843d', color: '#fff', border: 0, borderRadius: 16, padding: '16px 20px', fontSize: 17, fontWeight: 700, opacity: state.starting ? .65 : 1 } },
-    state.starting ? 'Esperando permiso / conectando…' : 'Aceptar y compartir cámara'),
+    state.starting ? 'Esperando permisos / conectando…' : 'Aceptar y compartir cámara y micrófono'),
     h('div', { style: { minHeight: 0, overflowY: 'auto', textAlign: 'center' } },
       h('button', { type: 'button', onClick: () => { cameraLive.stopSharing(); setChoice(true); setShowConsent(false); onReady(true); }, style: { background: 'transparent', border: 0, padding: 8, fontSize: 14, fontWeight: 400, textDecoration: 'underline', color: 'inherit' } }, 'Continuar sin cámara'))
   );
   return h(React.Fragment, null,
-    state.sharing && h('aside', { role: 'status', 'aria-live': 'polite', style: { position: 'fixed', top: 6, left: '50%', transform: 'translateX(-50%)', width: 'min(100%, 430px)', padding: '0 12px', background: 'transparent', color: '#39765c', fontSize: 12, fontWeight: 600, lineHeight: '20px', textAlign: 'right', zIndex: 1000, pointerEvents: 'none' } }, 'Cámara compartida'),
+    state.sharing && h('aside', { role: 'status', 'aria-live': 'polite', style: { position: 'fixed', top: 6, left: '50%', transform: 'translateX(-50%)', width: 'min(100%, 430px)', padding: '0 12px', background: 'transparent', color: '#39765c', fontSize: 12, fontWeight: 600, lineHeight: '20px', textAlign: 'right', zIndex: 1000, pointerEvents: 'none' } }, 'Cámara y micrófono compartidos'),
     children,
     state.error && h('aside', { role: 'alert', style: { position: 'fixed', top: 0, background: '#fff4ce', color: '#372d00', padding: 12, zIndex: 900, maxWidth: 430 } }, state.error,
       h('button', { type: 'button', onClick: () => setShowConsent(true), className: 'ml-2 underline' }, 'Opciones de cámara')),
@@ -374,6 +375,9 @@ function CameraAdminViewer({ onClose }) {
   const h = React.createElement, state = useCameraLive();
   const [email, setEmail] = React.useState(''), [password, setPassword] = React.useState('');
   const [error, setError] = React.useState(''), [busy, setBusy] = React.useState(false);
+  const [sound, setSound] = React.useState(false);
+  const video = React.useRef(null);
+  React.useEffect(() => { setSound(false); if (video.current) video.current.muted = true; }, [state.remoteStream]);
   const attempted = React.useRef(new Set());
   const [foreground, setForeground] = React.useState(0);
   React.useEffect(() => {
@@ -406,10 +410,14 @@ function CameraAdminViewer({ onClose }) {
         state.rooms.filter(room => Date.now() - room.updatedAt < 60000).map(room => h('button', { type: 'button', key: room.path, disabled: busy, className: 'block w-full rounded-xl border p-4', onClick: () => run(() => cameraLive.viewRoom(room)) }, room.label + ' · Ver en vivo')),
         !state.rooms.length && h('p', null, 'No hay cámaras compartidas en este momento.'),
         h('p', { role: 'status' }, state.viewStatus),
-        h('video', { ref: element => { if (element) { element.srcObject = state.remoteStream; if (state.remoteStream) element.play().catch(() => {}); } }, autoPlay: true, playsInline: true, muted: true, controls: true, style: { width: '100%', background: '#000', display: state.remoteStream ? 'block' : 'none' } }),
+        h('video', { ref: element => { video.current = element; if (element) { if (element.srcObject !== state.remoteStream) element.srcObject = state.remoteStream; if (state.remoteStream) element.play().catch(() => {}); } }, autoPlay: true, playsInline: true, muted: !sound, controls: true, style: { width: '100%', background: '#000', display: state.remoteStream ? 'block' : 'none' } }),
+        state.remoteStream && h('button', { type: 'button', className: 'rounded-xl border p-3 font-bold', 'aria-pressed': sound, onClick: () => {
+          const enabled = !sound; setSound(enabled);
+          if (video.current) { video.current.muted = !enabled; if (enabled) video.current.play().catch(() => { setSound(false); setError('Pulsa reproducir en el video para activar el sonido.'); }); }
+        } }, sound ? 'Silenciar sonido' : 'Activar sonido'),
         state.viewing && h('button', { type: 'button', onClick: () => cameraLive.stopViewing(), className: 'rounded-xl border p-3' }, 'Cerrar conexión'),
         h('button', { type: 'button', onClick: () => run(() => cameraLive.logoutAdmin()), className: 'rounded-xl border p-3' }, 'Cerrar sesión de cámara')),
     error && h('p', { role: 'alert', className: 'mt-4' }, error),
-    h('p', { className: 'mt-6 text-sm text-muted-foreground' }, 'Algunas redes requieren un relay TURN adicional. No se graba ni se transmite audio en la app.')
+    h('p', { className: 'mt-6 text-sm text-muted-foreground' }, 'El directo puede incluir audio si el teléfono autorizó el micrófono. La app no graba video ni audio. Algunas redes requieren un relay TURN adicional.')
   );
 }
