@@ -112,15 +112,26 @@ export function createCameraLiveController(runtime = {}) {
           }
           counts();
         };
+        let stage = 'preparar video';
         try {
           current.stream.getTracks().forEach(track => peer.addTrack(track, current.stream));
+          stage = 'leer solicitud';
           await peer.setRemoteDescription(data.offer); ensure();
+          stage = 'crear respuesta';
           await peer.setLocalDescription(await peer.createAnswer());
+          stage = 'preparar conexión';
           await waitIce(peer, current.abort.signal); ensure();
           if (current.peers.get(snapshot.key) !== peer) return;
+          stage = 'enviar respuesta a Firebase';
           await sdk.set(sdk.child(requestsRef, snapshot.key + '/answer'), peer.localDescription.toJSON());
-        } catch {
+          if (sender === current) patch({ error: '' });
+        } catch (error) {
           peer.onconnectionstatechange = null; peer.close(); current.peers.delete(snapshot.key); counts();
+          if (sender === current) {
+            // Never expose SDP, network addresses or raw SDK error messages.
+            const code = String(error?.code || error?.name || 'Error').replace(/[^a-zA-Z0-9_/-]/g, '').slice(0, 60);
+            patch({ error: 'La cámara no pudo responder al visor: ' + stage + ' (' + code + '). Puedes detenerla en Account.' });
+          }
         }
       };
       current.cleanups.push(sdk.onChildAdded(requestsRef, snapshot => { void acceptRequest(snapshot); }, () => { if (sender === current) stopSharing('Se perdió el permiso para compartir.'); }));
