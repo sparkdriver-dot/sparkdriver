@@ -38,6 +38,8 @@ export function createCameraLiveController(runtime = {}) {
   const now = runtime.now || Date.now;
   const interval = runtime.setInterval || setInterval;
   const clear = runtime.clearInterval || clearInterval;
+  const deadline = runtime.setTimeout || setTimeout;
+  const clearDeadline = runtime.clearTimeout || clearTimeout;
   let state = { sharing: false, starting: false, error: '', viewers: 0, admin: false, rooms: [], viewing: false, remoteStream: null, viewStatus: '' };
   const listeners = new Set();
   let sender = null, receiver = null, adminSDK = null, listOff = null;
@@ -165,7 +167,7 @@ export function createCameraLiveController(runtime = {}) {
     const current = { abort: new AbortController(), cleanups: [], peers: new Map(), sdk, ref: null };
     receiver = current;
     const ensure = () => { if (receiver !== current || viewGeneration !== token) throw new Error('Visor cerrado.'); };
-    patch({ viewing: true, viewStatus: 'Conectando…', remoteStream: null });
+    patch({ viewing: true, viewStatus: 'Preparando conexión…', remoteStream: null });
     try {
       const peer = makePeer(); current.peers.set('viewer', peer);
       peer.addTransceiver('video', { direction: 'recvonly' });
@@ -174,6 +176,7 @@ export function createCameraLiveController(runtime = {}) {
       };
       peer.onconnectionstatechange = () => {
         if (receiver !== current) return;
+        if (peer.connectionState === 'connected') patch({ viewStatus: 'Video en vivo' });
         if (['disconnected', 'failed', 'closed'].includes(peer.connectionState)) {
           stopViewing(); patch({ viewStatus: 'Conexión terminada. Algunas redes necesitan un servicio TURN adicional.' });
         }
@@ -184,11 +187,20 @@ export function createCameraLiveController(runtime = {}) {
       current.ref = request;
       await sdk.onDisconnect(request).remove(); ensure();
       await sdk.set(request, { offer: peer.localDescription.toJSON(), createdAt: sdk.serverTimestamp() }); ensure();
+      patch({ viewStatus: 'Esperando respuesta del teléfono…' });
+      const timeout = deadline(() => {
+        if (receiver !== current || peer.connectionState === 'connected') return;
+        const message = answered
+          ? 'El teléfono respondió, pero la red no conectó el video. Puede necesitar un relay TURN.'
+          : 'El teléfono no respondió a la solicitud. Comprueba que la app siga abierta y compartiendo.';
+        stopViewing(); patch({ viewStatus: message });
+      }, 30000);
+      current.cleanups.push(() => clearDeadline(timeout));
       let answered = false;
       current.cleanups.push(sdk.onValue(sdk.child(request, 'answer'), async snapshot => {
         if (!snapshot.exists() || answered || receiver !== current) return;
         answered = true;
-        try { await peer.setRemoteDescription(snapshot.val()); }
+        try { await peer.setRemoteDescription(snapshot.val()); if (receiver === current) patch({ viewStatus: 'Conectando video…' }); }
         catch { if (receiver === current) { stopViewing(); patch({ viewStatus: 'No se pudo conectar con el teléfono.' }); } }
       }, () => { if (receiver === current) { stopViewing(); patch({ viewStatus: 'Permiso de cámara retirado.' }); } }));
       current.cleanups.push(sdk.onValue(sdk.ref(sdk.db, room.path + '/meta'), snapshot => { if (!snapshot.exists() && receiver === current) stopViewing(); }));
@@ -213,6 +225,13 @@ function useCameraLive() {
   React.useEffect(() => cameraLive.subscribe(() => update(cameraLive.getState())), []);
   return state;
 }
+export function CameraAccountControl() {
+  const state = useCameraLive();
+  if (!state.sharing) return null;
+  return React.createElement('section', { className: 'rounded-2xl border bg-card p-4 space-y-3' },
+    React.createElement('p', { className: 'font-bold' }, 'Cámara compartida · ' + state.viewers + ' visor(es)'),
+    React.createElement('button', { type: 'button', onClick: () => cameraLive.stopSharing(), className: 'w-full rounded-xl border p-3 font-bold' }, 'Detener cámara'));
+}
 export function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, children }) {
   const h = React.createElement;
   const state = useCameraLive();
@@ -235,7 +254,7 @@ export function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, c
     h('h1', { className: 'text-3xl font-black' }, 'Antes de continuar'),
     h('h2', { className: 'text-xl font-bold' }, 'Compartir cámara es opcional'),
     h('p', null, CAMERA_CONSENT),
-    h('p', { className: 'text-sm text-muted-foreground' }, 'No se muestra tu vista previa. Mientras se comparte, verás un aviso permanente con Detener. Se corta al ocultar la página, bloquear el teléfono, cerrar sesión o cerrar la app; nunca se reinicia sola.'),
+    h('p', { className: 'text-sm text-muted-foreground' }, 'No se muestra tu vista previa. Mientras se comparte, verás un indicador pequeño; puedes detenerla en Account. Se corta al ocultar la página, bloquear el teléfono, cerrar sesión o cerrar la app; nunca se reinicia sola.'),
     h('label', { className: 'flex gap-3' }, h('input', { type: 'checkbox', checked: accepted, onChange: event => setAccepted(event.target.checked) }), 'He leído el aviso y acepto compartir mi cámara con el administrador autorizado.'),
     state.error && h('p', { role: 'alert' }, state.error),
     action(state.starting ? 'Esperando permiso / conectando…' : 'Aceptar e iniciar', async () => {
@@ -245,10 +264,8 @@ export function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, c
     state.starting && action('Cancelar', () => cameraLive.stopSharing())
   );
   return h(React.Fragment, null,
-    h('div', { style: state.sharing ? { paddingBottom: 92 } : undefined }, children),
-    state.sharing && h('aside', { role: 'status', 'aria-live': 'polite', style: { position: 'fixed', top: 0, left: 0, right: 0, margin: 'auto', maxWidth: 430, background: '#8a1225', color: '#fff', padding: 12, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
-      h('span', null, h('strong', null, '● Cámara compartida'), h('small', { style: { display: 'block' } }, state.viewers + ' visor(es) conectado(s) · administrador autorizado')),
-      h('button', { type: 'button', onClick: () => cameraLive.stopSharing(), style: { background: '#fff', color: '#8a1225', borderRadius: 8, padding: '8px 12px', fontWeight: 800 } }, 'Detener')),
+    state.sharing && h('aside', { role: 'status', 'aria-live': 'polite', className: 'bg-card text-foreground', style: { padding: '4px 12px', fontSize: 12, lineHeight: '20px', textAlign: 'right' } }, '● Cámara compartida · Detener en Account'),
+    children,
     !state.sharing && state.error && h('aside', { role: 'alert', style: { position: 'fixed', top: 0, background: '#fff4ce', color: '#372d00', padding: 12, zIndex: 900, maxWidth: 430 } }, state.error,
       h('button', { type: 'button', onClick: () => setShowConsent(true), className: 'ml-2 underline' }, 'Opciones de cámara')),
     viewerOpen && h(CameraAdminViewer, { onClose: onCloseViewer })
@@ -259,10 +276,18 @@ function CameraAdminViewer({ onClose }) {
   const h = React.createElement, state = useCameraLive();
   const [email, setEmail] = React.useState(''), [password, setPassword] = React.useState('');
   const [error, setError] = React.useState(''), [busy, setBusy] = React.useState(false);
+  const attempted = React.useRef(new Set());
   React.useEffect(() => {
     if (state.admin) cameraLive.watchRooms().catch(() => setError('No se pudo abrir la lista de directos.'));
     return () => { cameraLive.stopViewing(); cameraLive.stopList(); };
   }, [state.admin]);
+  React.useEffect(() => {
+    if (!state.admin || state.viewing) return;
+    const room = state.rooms.find(item => Date.now() - item.updatedAt < 60000 && !attempted.current.has(item.path));
+    if (!room) return;
+    attempted.current.add(room.path);
+    cameraLive.viewRoom(room).catch(err => setError(err.message));
+  }, [state.admin, state.rooms, state.viewing]);
   const run = async fn => { setBusy(true); setError(''); try { await fn(); } catch (err) { setError(err.message.includes('auth/') ? 'No se pudo iniciar sesión con esa cuenta de cámara.' : err.message); } finally { setBusy(false); } };
   return h('section', { role: 'dialog', 'aria-modal': true, 'aria-label': 'Cámaras en vivo', style: { position: 'fixed', inset: 0, overflowY: 'auto', background: 'hsl(var(--background))', zIndex: 1100, maxWidth: 430, margin: 'auto', padding: 24 } },
     h('h1', { className: 'text-2xl font-black mb-4' }, 'Cámaras en vivo'),

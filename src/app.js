@@ -80,7 +80,7 @@ import {
 import { config } from "./config.js";
 
 import { createAuthClient } from "./auth.js";
-import { CameraLiveShell } from "./camera-live.js";
+import { CameraLiveShell, CameraAccountControl } from "./camera-live.js";
 import { CameraPreviewScreen } from "./camera-preview.js";
 import { PickupAddressEditor, NewItemForm } from "./editors.js";
 import { readOrderState, saveOrderState, createScanPlan } from "./lib/local-edits.js";
@@ -804,6 +804,7 @@ const AccountScreen = ({ onSignOut: e }) =>
               t,
             ),
           ),
+          jsxRuntime.jsx(CameraAccountControl, {}),
           jsxRuntime.jsxs(Button, {
             variant: "dangerOutline",
             size: "driver",
