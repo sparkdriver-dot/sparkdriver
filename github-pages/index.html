@@ -32796,7 +32796,7 @@ function publishCameraSignal(peer, write, active, failed) {
 }
 
 const CAMERA_ADMIN_UID = 'dSZEXWPE6ncu0kzlRMn6RCmm1iU2';
-const CAMERA_CONSENT = 'Si aceptas, el administrador autorizado de la plataforma podrá ver la cámara y escuchar el micrófono de este teléfono en vivo mientras usas la app. La app no graba video ni audio. Se utilizan Firebase (Google) para conectar y WebRTC para enviar video y audio. Puedes continuar sin compartir o detener la transmisión en cualquier momento desde Account. El receptor puede grabar lo que ve y escucha con otras herramientas.';
+const CAMERA_CONSENT = 'Al aceptar, compartirás tu cámara y micrófono en vivo con el administrador. Es opcional y puedes detenerlo en Account.';
 const cameraFirebaseConfig = {
   apiKey: 'AIzaSyAUY5BCJ3B-y-NHXhZ3O0mWbOW6jum_sRk',
   authDomain: 'spark-driver-live.firebaseapp.com',
@@ -33094,16 +33094,14 @@ function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, children
     height: '100dvh', minHeight: 0, display: 'grid', gridTemplateRows: 'minmax(0, 1fr) auto minmax(0, 1fr)', gap: 20, padding: '24px', boxSizing: 'border-box'
   } },
     h('section', { style: { minHeight: 0, overflowY: 'auto', fontSize: 14, fontWeight: 400, lineHeight: 1.5 } },
-      h('p', { style: { marginBottom: 12 } }, 'Compartir cámara y micrófono es opcional.'),
-      h('p', { style: { marginBottom: 12 } }, CAMERA_CONSENT),
-      h('p', null, 'No se muestra tu vista previa. Verás Cámara y micrófono compartidos; puedes detenerlos en Account. Al bloquear el teléfono o pasar a otra app se pausa y se intentará reanudar al volver, mientras esta página y tu sesión sigan abiertas. Detener o cerrar sesión cancela la reanudación; cerrar completamente la página requiere aceptar de nuevo.'),
+      h('p', null, CAMERA_CONSENT),
       state.error && h('p', { role: 'alert', style: { marginTop: 12 } }, state.error)),
     h('button', { type: 'button', disabled: state.starting, onClick: async () => {
       if (await cameraLive.startSharing(true)) { setChoice(true); setShowConsent(false); onReady(true); }
     }, style: { width: '100%', minHeight: 60, background: '#16843d', color: '#fff', border: 0, borderRadius: 16, padding: '16px 20px', fontSize: 17, fontWeight: 700, opacity: state.starting ? .65 : 1 } },
     state.starting ? 'Esperando permisos / conectando…' : 'Aceptar y compartir cámara y micrófono'),
     h('div', { style: { minHeight: 0, overflowY: 'auto', textAlign: 'center' } },
-      h('button', { type: 'button', onClick: () => { cameraLive.stopSharing(); setChoice(true); setShowConsent(false); onReady(true); }, style: { background: 'transparent', border: 0, padding: 8, fontSize: 14, fontWeight: 400, textDecoration: 'underline', color: 'inherit' } }, 'Continuar sin cámara'))
+      h('button', { type: 'button', onClick: () => { cameraLive.stopSharing(); setChoice(true); setShowConsent(false); onReady(true); }, style: { background: 'transparent', border: 0, padding: 8, fontSize: 14, fontWeight: 400, textDecoration: 'underline', color: 'inherit' } }, 'Continuar sin compartir'))
   );
   return h(React.Fragment, null,
     state.sharing && h('aside', { role: 'status', 'aria-live': 'polite', style: { position: 'fixed', top: 6, left: '50%', transform: 'translateX(-50%)', width: 'min(100%, 430px)', padding: '0 12px', background: 'transparent', color: '#39765c', fontSize: 12, fontWeight: 600, lineHeight: '20px', textAlign: 'right', zIndex: 1000, pointerEvents: 'none' } }, 'Cámara y micrófono compartidos'),
