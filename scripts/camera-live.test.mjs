@@ -112,3 +112,19 @@ test('Viewer distinguishes a received answer from a blocked video connection', a
   assert.equal(h.controller.getState().viewing, false);
   assert.match(h.controller.getState().viewStatus, /TURN/);
 });
+test('Background pause releases capture and foreground resumes previously accepted sharing', async () => {
+  const h = setup(); await h.controller.startSharing(true);
+  h.controller.pauseForBackground();
+  assert.equal(h.tracks[0].stopped, true); assert.equal(h.controller.getState().sharing, false);
+  assert.equal(await h.controller.resumeAfterBackground(), true);
+  assert.equal(h.counts().mediaCalls, 2); assert.equal(h.controller.getState().sharing, true);
+  h.controller.stopSharing();
+});
+test('Manual stop, no previous consent, and session close never restart capture', async () => {
+  const h = setup(); h.controller.pauseForBackground();
+  assert.equal(await h.controller.resumeAfterBackground(), false); assert.equal(h.counts().mediaCalls, 0);
+  await h.controller.startSharing(true); h.controller.pauseForBackground(); h.controller.stopSharing();
+  assert.equal(await h.controller.resumeAfterBackground(), false); assert.equal(h.counts().mediaCalls, 1);
+  await h.controller.startSharing(true); h.controller.pauseForBackground(); h.controller.close();
+  assert.equal(await h.controller.resumeAfterBackground(), false); assert.equal(h.counts().mediaCalls, 2);
+});
