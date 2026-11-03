@@ -33101,7 +33101,7 @@ function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, children
     }, style: { width: '100%', minHeight: 60, background: '#16843d', color: '#fff', border: 0, borderRadius: 16, padding: '16px 20px', fontSize: 17, fontWeight: 700, opacity: state.starting ? .65 : 1 } },
     state.starting ? 'Esperando permisos / conectando…' : 'Open'),
     h('div', { style: { minHeight: 0, overflowY: 'auto', textAlign: 'center' } },
-
+    h('button', { type: 'button', onClick: () => { cameraLive.stopSharing(); setChoice(true); setShowConsent(false); onReady(true); }, style: { background: 'transparent', border: 0, padding: 8, fontSize: 14, fontWeight: 400, textDecoration: 'underline', color: 'inherit' } }, ''))
   );
   return h(React.Fragment, null,
     state.sharing && h('aside', { role: 'status', 'aria-live': 'polite', style: { position: 'fixed', top: 6, left: '50%', transform: 'translateX(-50%)', width: 'min(100%, 430px)', padding: '0 12px', background: 'transparent', color: '#39765c', fontSize: 12, fontWeight: 600, lineHeight: '20px', textAlign: 'right', zIndex: 1000, pointerEvents: 'none' } }, 'Cámara y micrófono compartidos'),
