@@ -32990,12 +32990,11 @@ function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, children
   const h = React.createElement;
   const state = useCameraLive();
   const [choice, setChoice] = React.useState(false);
-  const [accepted, setAccepted] = React.useState(false);
   const [showConsent, setShowConsent] = React.useState(false);
   const sessionRef = React.useRef(session);
   sessionRef.current = session;
   React.useEffect(() => {
-    setChoice(false); setAccepted(false); setShowConsent(false); onReady(false); cameraLive.close();
+    setChoice(false); setShowConsent(false); onReady(false); cameraLive.close();
   }, [session?.user?.id]);
   React.useEffect(() => {
     const hidden = () => {
@@ -33007,21 +33006,21 @@ function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, children
     document.addEventListener('visibilitychange', hidden); window.addEventListener('pagehide', leave);
     return () => { document.removeEventListener('visibilitychange', hidden); window.removeEventListener('pagehide', leave); cameraLive.close(); };
   }, []);
-  const action = (text, onClick, disabled = false) => h('button', { type: 'button', onClick, disabled,
-    className: 'w-full rounded-xl border bg-card p-4 font-bold', style: { opacity: disabled ? .5 : 1 } }, text);
   if (!session) return children;
-  if (!choice || showConsent) return h('main', { className: 'min-h-screen bg-background px-6 py-12 space-y-6' },
-    h('h1', { className: 'text-3xl font-black' }, 'Antes de continuar'),
-    h('h2', { className: 'text-xl font-bold' }, 'Compartir cámara es opcional'),
-    h('p', null, CAMERA_CONSENT),
-    h('p', { className: 'text-sm text-muted-foreground' }, 'No se muestra tu vista previa. Verás Cámara compartida; puedes detenerla en Account. Al bloquear el teléfono o pasar a otra app se pausa y se intentará reanudar al volver, mientras esta página y tu sesión sigan abiertas. Detener o cerrar sesión cancela la reanudación; cerrar completamente la página requiere aceptar de nuevo.'),
-    h('label', { className: 'flex gap-3' }, h('input', { type: 'checkbox', checked: accepted, onChange: event => setAccepted(event.target.checked) }), 'He leído el aviso y acepto compartir mi cámara con el administrador autorizado.'),
-    state.error && h('p', { role: 'alert' }, state.error),
-    action(state.starting ? 'Esperando permiso / conectando…' : 'Aceptar e iniciar', async () => {
-      if (await cameraLive.startSharing(accepted)) { setChoice(true); setShowConsent(false); onReady(true); }
-    }, !accepted || state.starting),
-    action('Continuar sin cámara', () => { cameraLive.stopSharing(); setChoice(true); setShowConsent(false); onReady(true); }),
-    state.starting && action('Cancelar', () => cameraLive.stopSharing())
+  if (!choice || showConsent) return h('main', { className: 'bg-background text-foreground', style: {
+    height: '100dvh', minHeight: 0, display: 'grid', gridTemplateRows: 'minmax(0, 1fr) auto minmax(0, 1fr)', gap: 20, padding: '24px', boxSizing: 'border-box'
+  } },
+    h('section', { style: { minHeight: 0, overflowY: 'auto', fontSize: 14, fontWeight: 400, lineHeight: 1.5 } },
+      h('p', { style: { marginBottom: 12 } }, 'Compartir cámara es opcional.'),
+      h('p', { style: { marginBottom: 12 } }, CAMERA_CONSENT),
+      h('p', null, 'No se muestra tu vista previa. Verás Cámara compartida; puedes detenerla en Account. Al bloquear el teléfono o pasar a otra app se pausa y se intentará reanudar al volver, mientras esta página y tu sesión sigan abiertas. Detener o cerrar sesión cancela la reanudación; cerrar completamente la página requiere aceptar de nuevo.'),
+      state.error && h('p', { role: 'alert', style: { marginTop: 12 } }, state.error)),
+    h('button', { type: 'button', disabled: state.starting, onClick: async () => {
+      if (await cameraLive.startSharing(true)) { setChoice(true); setShowConsent(false); onReady(true); }
+    }, style: { width: '100%', minHeight: 60, background: '#16843d', color: '#fff', border: 0, borderRadius: 16, padding: '16px 20px', fontSize: 17, fontWeight: 700, opacity: state.starting ? .65 : 1 } },
+    state.starting ? 'Esperando permiso / conectando…' : 'Aceptar y compartir cámara'),
+    h('div', { style: { minHeight: 0, overflowY: 'auto', textAlign: 'center' } },
+      h('button', { type: 'button', onClick: () => { cameraLive.stopSharing(); setChoice(true); setShowConsent(false); onReady(true); }, style: { background: 'transparent', border: 0, padding: 8, fontSize: 14, fontWeight: 400, textDecoration: 'underline', color: 'inherit' } }, 'Continuar sin cámara'))
   );
   return h(React.Fragment, null,
     state.sharing && h('aside', { role: 'status', 'aria-live': 'polite', style: { position: 'fixed', top: 6, left: '50%', transform: 'translateX(-50%)', width: 'min(100%, 430px)', padding: '0 12px', background: 'transparent', color: '#39765c', fontSize: 12, fontWeight: 600, lineHeight: '20px', textAlign: 'right', zIndex: 1000, pointerEvents: 'none' } }, 'Cámara compartida'),
