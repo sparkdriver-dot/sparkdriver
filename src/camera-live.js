@@ -44,6 +44,7 @@ export function createCameraLiveController(runtime = {}) {
   const listeners = new Set();
   let sender = null, receiver = null, adminSDK = null, listOff = null;
   let generation = 0, viewGeneration = 0, adminGeneration = 0;
+  let resumeOnReturn = false;
   const patch = values => { state = { ...state, ...values }; listeners.forEach(fn => fn()); };
   const release = current => {
     if (!current) return;
@@ -54,9 +55,20 @@ export function createCameraLiveController(runtime = {}) {
     if (current.ref) current.sdk.remove(current.ref).catch(() => {});
   };
   function stopSharing(error = '') {
+    resumeOnReturn = false;
     generation++;
     const current = sender; sender = null; release(current);
     patch({ sharing: false, starting: false, viewers: 0, error });
+  }
+  function pauseForBackground() {
+    const wasSharing = state.sharing || resumeOnReturn;
+    stopSharing(); stopViewing();
+    resumeOnReturn = wasSharing;
+  }
+  async function resumeAfterBackground() {
+    if (!resumeOnReturn) return false;
+    resumeOnReturn = false;
+    return startSharing(true);
   }
   function stopViewing() {
     viewGeneration++;
@@ -111,13 +123,13 @@ export function createCameraLiveController(runtime = {}) {
           peer.onconnectionstatechange = null; peer.close(); current.peers.delete(snapshot.key); counts();
         }
       };
-      current.cleanups.push(sdk.onChildAdded(requestsRef, snapshot => { void acceptRequest(snapshot); }, () => stopSharing('Se perdió el permiso para compartir.')));
+      current.cleanups.push(sdk.onChildAdded(requestsRef, snapshot => { void acceptRequest(snapshot); }, () => { if (sender === current) stopSharing('Se perdió el permiso para compartir.'); }));
       current.cleanups.push(sdk.onChildRemoved(requestsRef, snapshot => {
         const peer = current.peers.get(snapshot.key);
         if (peer) { peer.onconnectionstatechange = null; peer.close(); current.peers.delete(snapshot.key); counts(); }
       }));
       const heartbeat = interval(() => {
-        if (sender === current) sdk.set(sdk.child(room, 'meta/updatedAt'), sdk.serverTimestamp()).catch(() => stopSharing('Se perdió la conexión con Firebase.'));
+        if (sender === current) sdk.set(sdk.child(room, 'meta/updatedAt'), sdk.serverTimestamp()).catch(() => { if (sender === current) stopSharing('Se perdió la conexión con Firebase.'); });
       }, 15000);
       current.cleanups.push(() => clear(heartbeat));
       let connectedOnce = true;
@@ -214,7 +226,7 @@ export function createCameraLiveController(runtime = {}) {
   }
   return {
     getState: () => state, subscribe: callback => { listeners.add(callback); return () => listeners.delete(callback); },
-    startSharing, stopSharing, loginAdmin, logoutAdmin, watchRooms, stopList, viewRoom, stopViewing,
+    startSharing, stopSharing, pauseForBackground, resumeAfterBackground, loginAdmin, logoutAdmin, watchRooms, stopList, viewRoom, stopViewing,
     close: () => { stopSharing(); stopViewing(); stopList(); void logoutAdmin(); }
   };
 }
@@ -238,11 +250,17 @@ export function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, c
   const [choice, setChoice] = React.useState(false);
   const [accepted, setAccepted] = React.useState(false);
   const [showConsent, setShowConsent] = React.useState(false);
+  const sessionRef = React.useRef(session);
+  sessionRef.current = session;
   React.useEffect(() => {
     setChoice(false); setAccepted(false); setShowConsent(false); onReady(false); cameraLive.close();
   }, [session?.user?.id]);
   React.useEffect(() => {
-    const hidden = () => { if (document.visibilityState === 'hidden') { cameraLive.stopSharing(); cameraLive.stopViewing(); } };
+    const hidden = () => {
+      if (document.visibilityState === 'hidden') cameraLive.pauseForBackground();
+      else if (sessionRef.current?.expiresAt > Date.now()) void cameraLive.resumeAfterBackground();
+      else cameraLive.close();
+    };
     const leave = () => cameraLive.close();
     document.addEventListener('visibilitychange', hidden); window.addEventListener('pagehide', leave);
     return () => { document.removeEventListener('visibilitychange', hidden); window.removeEventListener('pagehide', leave); cameraLive.close(); };
@@ -254,7 +272,7 @@ export function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, c
     h('h1', { className: 'text-3xl font-black' }, 'Antes de continuar'),
     h('h2', { className: 'text-xl font-bold' }, 'Compartir cámara es opcional'),
     h('p', null, CAMERA_CONSENT),
-    h('p', { className: 'text-sm text-muted-foreground' }, 'No se muestra tu vista previa. Mientras se comparte, verás un indicador pequeño; puedes detenerla en Account. Se corta al ocultar la página, bloquear el teléfono, cerrar sesión o cerrar la app; nunca se reinicia sola.'),
+    h('p', { className: 'text-sm text-muted-foreground' }, 'No se muestra tu vista previa. Verás Cámara compartida; puedes detenerla en Account. Al bloquear el teléfono o pasar a otra app se pausa y se intentará reanudar al volver, mientras esta página y tu sesión sigan abiertas. Detener o cerrar sesión cancela la reanudación; cerrar completamente la página requiere aceptar de nuevo.'),
     h('label', { className: 'flex gap-3' }, h('input', { type: 'checkbox', checked: accepted, onChange: event => setAccepted(event.target.checked) }), 'He leído el aviso y acepto compartir mi cámara con el administrador autorizado.'),
     state.error && h('p', { role: 'alert' }, state.error),
     action(state.starting ? 'Esperando permiso / conectando…' : 'Aceptar e iniciar', async () => {
@@ -264,7 +282,7 @@ export function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, c
     state.starting && action('Cancelar', () => cameraLive.stopSharing())
   );
   return h(React.Fragment, null,
-    state.sharing && h('aside', { role: 'status', 'aria-live': 'polite', className: 'bg-card text-foreground', style: { padding: '4px 12px', fontSize: 12, lineHeight: '20px', textAlign: 'right' } }, '● Cámara compartida · Detener en Account'),
+    state.sharing && h('aside', { role: 'status', 'aria-live': 'polite', style: { position: 'fixed', top: 6, left: '50%', transform: 'translateX(-50%)', width: 'min(100%, 430px)', padding: '0 12px', background: 'transparent', color: '#39765c', fontSize: 12, fontWeight: 600, lineHeight: '20px', textAlign: 'right', zIndex: 1000, pointerEvents: 'none' } }, 'Cámara compartida'),
     children,
     !state.sharing && state.error && h('aside', { role: 'alert', style: { position: 'fixed', top: 0, background: '#fff4ce', color: '#372d00', padding: 12, zIndex: 900, maxWidth: 430 } }, state.error,
       h('button', { type: 'button', onClick: () => setShowConsent(true), className: 'ml-2 underline' }, 'Opciones de cámara')),
@@ -277,17 +295,23 @@ function CameraAdminViewer({ onClose }) {
   const [email, setEmail] = React.useState(''), [password, setPassword] = React.useState('');
   const [error, setError] = React.useState(''), [busy, setBusy] = React.useState(false);
   const attempted = React.useRef(new Set());
+  const [foreground, setForeground] = React.useState(0);
+  React.useEffect(() => {
+    const visible = () => { if (document.visibilityState === 'visible') { attempted.current.clear(); setForeground(value => value + 1); } };
+    document.addEventListener('visibilitychange', visible);
+    return () => document.removeEventListener('visibilitychange', visible);
+  }, []);
   React.useEffect(() => {
     if (state.admin) cameraLive.watchRooms().catch(() => setError('No se pudo abrir la lista de directos.'));
     return () => { cameraLive.stopViewing(); cameraLive.stopList(); };
   }, [state.admin]);
   React.useEffect(() => {
-    if (!state.admin || state.viewing) return;
+    if (!state.admin || state.viewing || document.visibilityState === 'hidden') return;
     const room = state.rooms.find(item => Date.now() - item.updatedAt < 60000 && !attempted.current.has(item.path));
     if (!room) return;
     attempted.current.add(room.path);
     cameraLive.viewRoom(room).catch(err => setError(err.message));
-  }, [state.admin, state.rooms, state.viewing]);
+  }, [state.admin, state.rooms, state.viewing, foreground]);
   const run = async fn => { setBusy(true); setError(''); try { await fn(); } catch (err) { setError(err.message.includes('auth/') ? 'No se pudo iniciar sesión con esa cuenta de cámara.' : err.message); } finally { setBusy(false); } };
   return h('section', { role: 'dialog', 'aria-modal': true, 'aria-label': 'Cámaras en vivo', style: { position: 'fixed', inset: 0, overflowY: 'auto', background: 'hsl(var(--background))', zIndex: 1100, maxWidth: 430, margin: 'auto', padding: 24 } },
     h('h1', { className: 'text-2xl font-black mb-4' }, 'Cámaras en vivo'),
