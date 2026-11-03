@@ -9,7 +9,7 @@ Firebase se usa únicamente para conectar cámaras y autenticar al administrador
 3. Solo si aceptas y autorizas el permiso se abre la cámara. No se muestra vista previa ni se transmite audio. Al compartir aparece un indicador pequeño de Cámara compartida. El botón Detener cámara y el número de visores están en Account.
 4. Para abrir el visor pulsa Account siete veces seguidas (menos de 1,5 segundos entre toques). Inicia sesión con la cuenta de administrador de cámara creada en Firebase. Es independiente del login de la app.
 5. El primer teléfono disponible se abre automáticamente; la lista se actualiza en tiempo real. Puedes elegir otro teléfono de la lista. No hay códigos que copiar. Hasta tres conexiones simultáneas del administrador por emisor; el visor muestra un teléfono cada vez.
-6. La transmisión se detiene al pulsar Detener, ocultar la página, perder la conexión, bloquear el teléfono, cerrar sesión o salir de la app. No se reinicia sin una nueva aceptación. Navegar por las pantallas de la app mantiene la transmisión y el aviso visibles.
+6. La transmisión se detiene al pulsar Detener, ocultar la página, perder la conexión, bloquear el teléfono, cerrar sesión o salir de la app. Al volver de segundo plano se intentará reanudar solo si estaba compartiendo y la página y la sesión siguen abiertas. Detener, continuar sin cámara, cerrar sesión o cerrar completamente la página cancelan la reanudación. Navegar por las pantallas de la app mantiene la transmisión y el aviso visibles.
 
 ## Acceso y datos
 
