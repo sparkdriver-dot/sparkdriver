@@ -33,7 +33,7 @@ function setup({ sdkFails = false, cameraFails = false, delayedMedia = false } =
       const track = { stopped: false, stop() { this.stopped = true; }, addEventListener() {} }; tracks.push(track);
       return delayedMedia ? await new Promise(resolve => { resolveMedia = () => resolve(stream); }) : stream;
     },
-    makePeer: () => ({ close() {}, addTransceiver() {}, addTrack() {}, createOffer: async () => ({ type: 'offer', sdp: 'v=0' }),
+    makePeer: () => ({ close() {}, addTransceiver() {}, addTrack() {}, createOffer: async () => ({ type: 'offer', sdp: 'v=0' }), createAnswer: async () => ({ type: 'answer', sdp: 'v=0' }),
       setRemoteDescription: async () => {},
       setLocalDescription: async function (desc) { this.localDescription = { toJSON: () => desc }; } }),
     waitIce: async () => {}, now: () => 1000,
@@ -127,4 +127,20 @@ test('Manual stop, no previous consent, and session close never restart capture'
   assert.equal(await h.controller.resumeAfterBackground(), false); assert.equal(h.counts().mediaCalls, 1);
   await h.controller.startSharing(true); h.controller.pauseForBackground(); h.controller.close();
   assert.equal(await h.controller.resumeAfterBackground(), false); assert.equal(h.counts().mediaCalls, 2);
+});
+
+test('Sender answers a viewer request and exposes a sanitized Firebase failure', async () => {
+  const h = setup(); await h.controller.startSharing(true);
+  const [path, request] = [...h.watchers.entries()].find(([key]) => key.endsWith(':add'));
+  const snapshot = key => ({ key, val: () => ({ offer: { type: 'offer', sdp: 'v=0' } }) });
+  request(snapshot('viewer-1'));
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  assert.equal(h.records.get(path.replace(':add', '/viewer-1/answer')).type, 'answer');
+  h.sdk.set = async () => { const error = Error('private SDP and addresses'); error.code = 'PERMISSION_DENIED'; throw error; };
+  request(snapshot('viewer-2'));
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  assert.match(h.controller.getState().error, /enviar respuesta a Firebase.*PERMISSION_DENIED/);
+  assert.doesNotMatch(h.controller.getState().error, /private SDP/);
+  assert.equal(h.controller.getState().sharing, true);
+  h.controller.stopSharing();
 });
