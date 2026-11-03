@@ -21,7 +21,13 @@ Las reglas propuestas están en firebase-camera.rules.json. En spark-driver-live
 
 ## Límites
 
-Usar HTTPS. El plan Spark tiene cuotas; no equivale a servicio ilimitado ni a garantía de disponibilidad. Se usa STUN de Google y no se incluye un relay TURN. Algunas redes móviles o corporativas no conectarán sin ese servicio adicional. Esta versión no promete funcionamiento en segundo plano ni con el teléfono bloqueado.
+### Configuración TURN entre redes
+
+En el visor del administrador, abre «Conexión entre redes · TURN». Introduce servidor:puerto, usuario TURN y clave TURN del proveedor; no uses la contraseña de tu cuenta. «Guardar TURN» almacena los datos de cliente en `cameraRelay` de Realtime Database. Las reglas de este proyecto permiten leer esa ruta al administrador y a identidades anónimas de la función de cámara; solo el administrador puede escribirla. Estos datos no se incrustan en GitHub, pero necesariamente se entregan al navegador que establece la conexión y sus usuarios autenticados pueden inspeccionarlos. No son una clave maestra ni una credencial de API del proveedor.
+
+«Probar TURN» comprueba la asignación de un candidato de tipo relay sin solicitar cámara ni micrófono. No demuestra por sí solo que un video entre dos redes esté funcionando: después hay que probar dos dispositivos en redes distintas. Cada conexión nueva carga la configuración guardada. La conexión directa se conserva cuando está disponible. El plan gratuito de ExpressTURN anuncia 1.000 GB/mes y acceso TCP/UDP por el puerto 3478; no garantiza atravesar cortafuegos que bloqueen ese puerto.
+
+Usar HTTPS. El plan Spark tiene cuotas; no equivale a servicio ilimitado ni a garantía de disponibilidad. Se usa STUN de Google y TURN cuando el administrador lo configura. El proveedor TURN tiene sus propias cuotas y restricciones. Esta versión no promete funcionamiento en segundo plano ni con el teléfono bloqueado.
 
 Las pruebas automatizadas verifican consentimiento previo, cancelación tardía de permisos, limpieza de cámara, pérdida de red, acceso administrativo separado y estructura de reglas. Falta verificar el video entre dos teléfonos físicos y las reglas publicadas contra Firebase real. Si solo se pulsa Continuar sin cámara, no se carga Firebase ni se pide acceso a la cámara.
 

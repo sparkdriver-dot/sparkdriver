@@ -2,6 +2,25 @@
   "rules": {
     ".read": false,
     ".write": false,
+    "cameraRelay": {
+      ".read": "auth != null && (auth.uid === 'dSZEXWPE6ncu0kzlRMn6RCmm1iU2' || auth.token.firebase.sign_in_provider === 'anonymous')",
+      ".write": "auth != null && auth.uid === 'dSZEXWPE6ncu0kzlRMn6RCmm1iU2'",
+      ".validate": "newData.hasChildren(['iceServers'])",
+      "iceServers": {
+        ".validate": "newData.hasChild('0')",
+        "$index": {
+          ".validate": "$index.matches(/^[0-7]$/) && newData.hasChildren(['urls', 'username', 'credential'])",
+          "urls": {
+            ".validate": "newData.hasChild('0')",
+            "$url": { ".validate": "$url.matches(/^[0-7]$/) && newData.isString() && newData.val().length <= 512" }
+          },
+          "username": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 512" },
+          "credential": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 512" },
+          "$other": { ".validate": false }
+        }
+      },
+      "$other": { ".validate": false }
+    },
     "cameraRooms": {
       ".read": "auth != null && auth.uid === 'dSZEXWPE6ncu0kzlRMn6RCmm1iU2'",
       "$sender": {
