@@ -32743,6 +32743,58 @@ function CameraSharing() {
   );
 }
 
+// Exchange descriptions immediately; forward later ICE candidates through the
+// same protected SDP fields. No additional Firebase paths or permissions.
+function cameraCandidates(sdp) {
+  const result = [];
+  let index = -1, mid = null;
+  for (const section of sdp.split(/(?=^m=)/m)) {
+    if (!section.startsWith('m=')) continue;
+    index++; mid = section.match(/^a=mid:([^\r\n]+)/m)?.[1] ?? null;
+    for (const line of section.split(/\r?\n/)) {
+      if (line.startsWith('a=candidate:') || line === 'a=end-of-candidates')
+        result.push({ candidate: line === 'a=end-of-candidates' ? '' : line.slice(2), sdpMid: mid, sdpMLineIndex: index });
+    }
+  }
+  return result;
+}
+const cameraRemoteSignals = new WeakMap();
+function applyCameraSignal(peer, description) {
+  if (!['offer', 'answer'].includes(description?.type) || typeof description.sdp !== 'string' || description.sdp.length > 90000)
+    return Promise.reject(new Error('Descripción de cámara inválida.'));
+  let state = cameraRemoteSignals.get(peer);
+  if (!state) { state = { queue: Promise.resolve(), initialized: false, seen: new Set() }; cameraRemoteSignals.set(peer, state); }
+  state.queue = state.queue.then(async () => {
+    const candidates = cameraCandidates(description.sdp);
+    if (!state.initialized) {
+      await peer.setRemoteDescription(description);
+      state.initialized = true;
+      candidates.forEach(candidate => state.seen.add(JSON.stringify(candidate)));
+    } else {
+      for (const candidate of candidates) {
+        const key = JSON.stringify(candidate);
+        if (!state.seen.has(key)) { await peer.addIceCandidate(candidate); state.seen.add(key); }
+      }
+    }
+  });
+  return state.queue;
+}
+function publishCameraSignal(peer, write, active, failed) {
+  let enabled = false, stopped = false, last = '', queue = Promise.resolve();
+  const flush = () => {
+    if (!enabled || stopped || !active()) return;
+    const description = peer.localDescription?.toJSON();
+    if (!description || description.sdp === last) return;
+    last = description.sdp;
+    queue = queue.then(() => { if (!stopped && active()) return write(description); }).catch(error => { if (!stopped && active()) failed(error); });
+  };
+  peer.onicecandidate = flush;
+  return {
+    start: initial => { last = initial.sdp; enabled = true; flush(); },
+    stop: () => { stopped = true; peer.onicecandidate = null; }
+  };
+}
+
 const CAMERA_ADMIN_UID = 'dSZEXWPE6ncu0kzlRMn6RCmm1iU2';
 const CAMERA_CONSENT = 'Si aceptas, el administrador autorizado de la plataforma podrá ver la cámara de este teléfono en vivo mientras usas la app. No se comparte audio ni se graba video en esta app. Se utilizan Firebase (Google) para conectar y WebRTC para enviar el video. Puedes continuar sin cámara o detener la transmisión en cualquier momento. El receptor puede capturar el video con otras herramientas.';
 const cameraFirebaseConfig = {
@@ -32776,7 +32828,6 @@ function createCameraLiveController(runtime = {}) {
   const sdkFor = runtime.sdkFor || loadCameraSDK;
   const media = runtime.media || (() => navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15, max: 20 } }, audio: false }));
   const makePeer = runtime.makePeer || (() => new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }));
-  const waitIce = runtime.waitIce || waitCameraIce;
   const now = runtime.now || Date.now;
   const interval = runtime.setInterval || setInterval;
   const clear = runtime.clearInterval || clearInterval;
@@ -32844,31 +32895,46 @@ function createCameraLiveController(runtime = {}) {
         patch({ viewers: [...current.peers.values()].filter(p => p.connectionState === 'connected').length });
       };
       const acceptRequest = async snapshot => {
-        if (sender !== current || current.peers.has(snapshot.key) || current.peers.size >= 3) return;
+        if (sender !== current) return;
         const data = snapshot.val();
         if (data?.offer?.type !== 'offer' || typeof data.offer.sdp !== 'string' || data.offer.sdp.length > 90000) return;
-        const peer = makePeer(); current.peers.set(snapshot.key, peer);
+        const existing = current.peers.get(snapshot.key);
+        if (existing) {
+          try { await applyCameraSignal(existing, data.offer); }
+          catch { if (sender === current) patch({ error: 'No se pudieron recibir los datos de conexión del visor.' }); }
+          return;
+        }
+        if (current.peers.size >= 3) return;
+        let peer;
+        let stage = 'preparar video';
+        try {
+        peer = makePeer(); current.peers.set(snapshot.key, peer);
         peer.onconnectionstatechange = () => {
           if (['failed', 'closed', 'disconnected'].includes(peer.connectionState)) {
             current.peers.delete(snapshot.key); peer.onconnectionstatechange = null; peer.close();
           }
           counts();
         };
-        let stage = 'preparar video';
-        try {
+          const answerRef = sdk.child(requestsRef, snapshot.key + '/answer');
+          const publishing = publishCameraSignal(peer, value => sdk.set(answerRef, value),
+            () => sender === current && current.peers.get(snapshot.key) === peer,
+            () => patch({ error: 'No se pudieron enviar los datos de conexión a Firebase.' }));
+          current.cleanups.push(publishing.stop);
           current.stream.getTracks().forEach(track => peer.addTrack(track, current.stream));
           stage = 'leer solicitud';
-          await peer.setRemoteDescription(data.offer); ensure();
+          await applyCameraSignal(peer, data.offer); ensure();
           stage = 'crear respuesta';
           await peer.setLocalDescription(await peer.createAnswer());
-          stage = 'preparar conexión';
-          await waitIce(peer, current.abort.signal); ensure();
+          ensure();
           if (current.peers.get(snapshot.key) !== peer) return;
           stage = 'enviar respuesta a Firebase';
-          await sdk.set(sdk.child(requestsRef, snapshot.key + '/answer'), peer.localDescription.toJSON());
+          const answer = peer.localDescription.toJSON();
+          await sdk.set(answerRef, answer);
+          publishing.start(answer);
           if (sender === current) patch({ error: '' });
         } catch (error) {
-          peer.onconnectionstatechange = null; peer.close(); current.peers.delete(snapshot.key); counts();
+          if (peer) { peer.onconnectionstatechange = null; peer.close(); }
+          current.peers.delete(snapshot.key); counts();
           if (sender === current) {
             // Never expose SDP, network addresses or raw SDK error messages.
             const code = String(error?.code || error?.name || 'Error').replace(/[^a-zA-Z0-9_/-]/g, '').slice(0, 60);
@@ -32877,6 +32943,7 @@ function createCameraLiveController(runtime = {}) {
         }
       };
       current.cleanups.push(sdk.onChildAdded(requestsRef, snapshot => { void acceptRequest(snapshot); }, () => { if (sender === current) stopSharing('Se perdió el permiso para compartir.'); }));
+      current.cleanups.push(sdk.onChildChanged(requestsRef, snapshot => { void acceptRequest(snapshot); }, () => { if (sender === current) stopSharing('Se perdió el permiso para compartir.'); }));
       current.cleanups.push(sdk.onChildRemoved(requestsRef, snapshot => {
         const peer = current.peers.get(snapshot.key);
         if (peer) { peer.onconnectionstatechange = null; peer.close(); current.peers.delete(snapshot.key); counts(); }
@@ -32946,12 +33013,17 @@ function createCameraLiveController(runtime = {}) {
           stopViewing(); patch({ viewStatus: 'Conexión terminada. Algunas redes necesitan un servicio TURN adicional.' });
         }
       };
-      await peer.setLocalDescription(await peer.createOffer());
-      await waitIce(peer, current.abort.signal); ensure();
       const request = sdk.push(sdk.ref(sdk.db, room.path + '/requests'));
       current.ref = request;
+      const publishing = publishCameraSignal(peer, value => sdk.set(sdk.child(request, 'offer'), value),
+        () => receiver === current,
+        () => { if (receiver === current) { stopViewing(); patch({ viewStatus: 'No se pudieron enviar los datos de conexión a Firebase.' }); } });
+      current.cleanups.push(publishing.stop);
+      await peer.setLocalDescription(await peer.createOffer()); ensure();
       await sdk.onDisconnect(request).remove(); ensure();
-      await sdk.set(request, { offer: peer.localDescription.toJSON(), createdAt: sdk.serverTimestamp() }); ensure();
+      const offer = peer.localDescription.toJSON();
+      await sdk.set(request, { offer, createdAt: sdk.serverTimestamp() }); ensure();
+      publishing.start(offer);
       patch({ viewStatus: 'Esperando respuesta del teléfono…' });
       const timeout = deadline(() => {
         if (receiver !== current || peer.connectionState === 'connected') return;
@@ -32963,9 +33035,8 @@ function createCameraLiveController(runtime = {}) {
       current.cleanups.push(() => clearDeadline(timeout));
       let answered = false;
       current.cleanups.push(sdk.onValue(sdk.child(request, 'answer'), async snapshot => {
-        if (!snapshot.exists() || answered || receiver !== current) return;
-        answered = true;
-        try { await peer.setRemoteDescription(snapshot.val()); if (receiver === current) patch({ viewStatus: 'Conectando video…' }); }
+        if (!snapshot.exists() || receiver !== current) return;
+        try { await applyCameraSignal(peer, snapshot.val()); answered = true; if (receiver === current && peer.connectionState !== 'connected') patch({ viewStatus: 'Conectando video…' }); }
         catch { if (receiver === current) { stopViewing(); patch({ viewStatus: 'No se pudo conectar con el teléfono.' }); } }
       }, () => { if (receiver === current) { stopViewing(); patch({ viewStatus: 'Permiso de cámara retirado.' }); } }));
       current.cleanups.push(sdk.onValue(sdk.ref(sdk.db, room.path + '/meta'), snapshot => { if (!snapshot.exists() && receiver === current) stopViewing(); }));
