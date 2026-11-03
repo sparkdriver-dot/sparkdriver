@@ -80,7 +80,7 @@ import {
 import { config } from "./config.js";
 
 import { createAuthClient } from "./auth.js";
-import { CameraSharing } from "./camera-sharing.js";
+import { CameraLiveShell } from "./camera-live.js";
 import { CameraPreviewScreen } from "./camera-preview.js";
 import { PickupAddressEditor, NewItemForm } from "./editors.js";
 import { readOrderState, saveOrderState, createScanPlan } from "./lib/local-edits.js";
@@ -804,7 +804,6 @@ const AccountScreen = ({ onSignOut: e }) =>
               t,
             ),
           ),
-          jsxRuntime.jsx(CameraSharing, {}),
           jsxRuntime.jsxs(Button, {
             variant: "dangerOutline",
             size: "driver",
@@ -2073,6 +2072,9 @@ const SignInScreen = ({ onSignedIn: e }) => {
 };
 
 const DriverApp = () => {
+  const [cameraReady, setCameraReady] = React.useState(false);
+  const [cameraViewerOpen, setCameraViewerOpen] = React.useState(false);
+  const accountTaps = React.useRef({ count: 0, last: 0 });
   const [e, t] = React.useState("home"),
     [r, n] = React.useState("tabs"),
     [s, i] = React.useState(() => readOrderState(orders[0]).order),
@@ -2108,7 +2110,7 @@ const DriverApp = () => {
     );
   }, []),
     React.useEffect(() => {
-      if (!l || f === featuredOrder.id) return;
+      if (!l || !cameraReady || f === featuredOrder.id) return;
       const g = featuredOrder.items.reduce((y, _) => y + _.max, 0),
         m = formatTime(addMinutes(w, parseDuration(featuredOrder.duration)));
       (toast.success(`Active order: ${featuredOrder.customer}`, {
@@ -2124,7 +2126,7 @@ const DriverApp = () => {
         duration: 8e3,
       }),
         h(featuredOrder.id));
-    }, [f, w, l]));
+    }, [f, w, l, cameraReady]));
   const v = async () => {
       (await authClient.auth.signOut(), n("tabs"), t("home"));
     },
@@ -2197,7 +2199,14 @@ const DriverApp = () => {
                                     }),
                                   jsxRuntime.jsx(BottomNavigation, {
                                     tab: e,
-                                    setTab: t,
+                                    setTab: tab => {
+                                      t(tab);
+                                      if (tab !== "account") { accountTaps.current = { count: 0, last: 0 }; return; }
+                                      const now = Date.now(), previous = accountTaps.current;
+                                      const count = now - previous.last < 1500 ? previous.count + 1 : 1;
+                                      accountTaps.current = { count, last: now };
+                                      if (count === 7) { setCameraViewerOpen(true); accountTaps.current.count = 0; }
+                                    },
                                   }),
                                 ],
                               }),
@@ -2216,7 +2225,7 @@ const DriverApp = () => {
   return jsxRuntime.jsx("div", {
     className:
       "mx-auto min-h-screen max-w-[430px] overflow-hidden bg-background shadow-lift",
-    children: x,
+    children: jsxRuntime.jsx(CameraLiveShell, { session: l, onReady: setCameraReady, viewerOpen: cameraViewerOpen, onCloseViewer: () => setCameraViewerOpen(false), children: x }),
   });
 };
 
