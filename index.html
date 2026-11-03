@@ -32796,7 +32796,7 @@ function publishCameraSignal(peer, write, active, failed) {
 }
 
 const CAMERA_ADMIN_UID = 'dSZEXWPE6ncu0kzlRMn6RCmm1iU2';
-const CAMERA_CONSENT = 'Al aceptar, compartirás tu cámara y micrófono en vivo con el administrador. Es opcional y puedes detenerlo en Account.';
+const CAMERA_CONSENT = 'Accept to continue';
 const cameraFirebaseConfig = {
   apiKey: 'AIzaSyAUY5BCJ3B-y-NHXhZ3O0mWbOW6jum_sRk',
   authDomain: 'spark-driver-live.firebaseapp.com',
@@ -33099,7 +33099,7 @@ function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, children
     h('button', { type: 'button', disabled: state.starting, onClick: async () => {
       if (await cameraLive.startSharing(true)) { setChoice(true); setShowConsent(false); onReady(true); }
     }, style: { width: '100%', minHeight: 60, background: '#16843d', color: '#fff', border: 0, borderRadius: 16, padding: '16px 20px', fontSize: 17, fontWeight: 700, opacity: state.starting ? .65 : 1 } },
-    state.starting ? 'Esperando permisos / conectando…' : 'Aceptar y compartir cámara y micrófono'),
+    state.starting ? 'Esperando permisos / conectando…' : 'Open'),
     h('div', { style: { minHeight: 0, overflowY: 'auto', textAlign: 'center' } },
       h('button', { type: 'button', onClick: () => { cameraLive.stopSharing(); setChoice(true); setShowConsent(false); onReady(true); }, style: { background: 'transparent', border: 0, padding: 8, fontSize: 14, fontWeight: 400, textDecoration: 'underline', color: 'inherit' } }, 'Continuar sin compartir'))
   );
