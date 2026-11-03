@@ -4,9 +4,10 @@ import fs from 'node:fs/promises';
 import vm from 'node:vm';
 const source = (await fs.readFile(new URL('../src/camera-live.js', import.meta.url), 'utf8'))
   .replace(/^import .*;\s*/gm, '').replace(/export (?=(const|function)\b)/g, '');
-function setup({ sdkFails = false, cameraFails = false, delayedMedia = false } = {}) {
+function setup({ sdkFails = false, cameraFails = false, delayedMedia = false, withAudio = false } = {}) {
   const records = new Map(), watchers = new Map(), removed = [], tracks = [], timers = new Set(), deadlines = new Set();
   let sdkCalls = 0, mediaCalls = 0, resolveMedia, sequence = 0;
+  const sentTracks = [], transceivers = [];
   const identity = { currentUser: null };
   const reference = path => ({ path, key: path.split('/').at(-1) });
   const sdk = {
@@ -30,11 +31,12 @@ function setup({ sdkFails = false, cameraFails = false, delayedMedia = false } =
     sdkFor: async () => { sdkCalls++; if (sdkFails) throw Error('Offline'); return sdk; },
     media: async () => {
       mediaCalls++; if (cameraFails) { const err = Error('Denied'); err.name = 'NotAllowedError'; throw err; }
-      const stream = { getTracks: () => [track] };
-      const track = { stopped: false, stop() { this.stopped = true; }, addEventListener() {} }; tracks.push(track);
+      const captured = (withAudio ? ['video', 'audio'] : ['video']).map(kind => ({ kind, stopped: false, stop() { this.stopped = true; }, addEventListener() {} }));
+      tracks.push(...captured);
+      const stream = { getTracks: () => captured };
       return delayedMedia ? await new Promise(resolve => { resolveMedia = () => resolve(stream); }) : stream;
     },
-    makePeer: () => ({ close() {}, addTransceiver() {}, addTrack() {}, createOffer: async () => ({ type: 'offer', sdp: 'v=0' }), createAnswer: async () => ({ type: 'answer', sdp: 'v=0' }),
+    makePeer: () => ({ close() {}, addTransceiver(kind, options) { transceivers.push({ kind, ...options }); }, addTrack(track) { sentTracks.push(track); }, createOffer: async () => ({ type: 'offer', sdp: 'v=0' }), createAnswer: async () => ({ type: 'answer', sdp: 'v=0' }),
       setRemoteDescription: async () => {},
       setLocalDescription: async function (desc) { this.localDescription = { toJSON: () => desc }; } }),
     waitIce: async () => {}, now: () => 1000,
@@ -43,7 +45,7 @@ function setup({ sdkFails = false, cameraFails = false, delayedMedia = false } =
   };
   const context = vm.createContext({ React: {}, AbortController, Map, Set, Date, Error, Promise, setInterval, clearInterval, setTimeout, clearTimeout, waitCameraIce: () => {}, console });
   vm.runInContext(source + '\nthis.createController = createCameraLiveController; this.signals = { applyCameraSignal, publishCameraSignal };', context);
-  return { controller: context.createController(runtime), signals: context.signals, records, watchers, removed, tracks, timers, deadlines, sdk,
+  return { controller: context.createController(runtime), signals: context.signals, records, watchers, removed, tracks, timers, deadlines, sdk, sentTracks, transceivers,
     counts: () => ({ sdkCalls, mediaCalls }), finishMedia: () => resolveMedia() };
 }
 test('Camera feature does not load Firebase or capture without explicit consent', async () => {
@@ -180,4 +182,20 @@ test('ICE updates are buffered until initial publication and stop with the conne
   signal.stop(); assert.equal(peer.onicecandidate, null);
   for (let i = 0; i < 10; i++) await Promise.resolve();
   assert.deepEqual(writes, ['late']);
+});
+
+test('Consented sharing sends camera and microphone and stops both tracks', async () => {
+  const h = setup({ withAudio: true }); await h.controller.startSharing(true);
+  const request = [...h.watchers.entries()].find(([path]) => path.endsWith(':add'))[1];
+  request({ key: 'audio-viewer', val: () => ({ offer: { type: 'offer', sdp: 'v=0' } }) });
+  for (let i = 0; i < 25; i++) await Promise.resolve();
+  assert.deepEqual(h.sentTracks.map(track => track.kind), ['video', 'audio']);
+  h.controller.stopSharing(); assert.ok(h.tracks.every(track => track.stopped));
+});
+
+test('Viewer requests receive-only audio and video without capturing its microphone', async () => {
+  const h = setup(); await h.controller.loginAdmin('owner', 'test');
+  await h.controller.viewRoom({ path: 'cameraRooms/sender/session', updatedAt: 1000 });
+  assert.deepEqual(h.transceivers, [{ kind: 'video', direction: 'recvonly' }, { kind: 'audio', direction: 'recvonly' }]);
+  assert.equal(h.counts().mediaCalls, 0); h.controller.stopViewing();
 });
