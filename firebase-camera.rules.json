@@ -1,0 +1,44 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "cameraRooms": {
+      ".read": "auth != null && auth.uid === 'dSZEXWPE6ncu0kzlRMn6RCmm1iU2'",
+      "$sender": {
+        ".read": "auth != null && auth.uid === $sender",
+        "$session": {
+          ".write": "auth != null && auth.uid === $sender && auth.token.firebase.sign_in_provider === 'anonymous'",
+          ".validate": "newData.hasChildren(['meta'])",
+          "meta": {
+            ".validate": "newData.hasChildren(['label', 'updatedAt', 'consentVersion'])",
+            "label": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "updatedAt": { ".validate": "newData.isNumber() && newData.val() <= now + 1000 && newData.val() >= now - 60000" },
+            "consentVersion": { ".validate": "newData.val() === 1" },
+            "$other": { ".validate": false }
+          },
+          "requests": {
+            "$request": {
+              ".write": "auth != null && auth.uid === 'dSZEXWPE6ncu0kzlRMn6RCmm1iU2' && root.child('cameraRooms').child($sender).child($session).child('meta').child('consentVersion').val() === 1",
+              ".validate": "newData.hasChildren(['offer', 'createdAt'])",
+              "offer": {
+                ".validate": "newData.hasChildren(['type', 'sdp'])",
+                "type": { ".validate": "newData.val() === 'offer'" },
+                "sdp": { ".validate": "newData.isString() && newData.val().length <= 90000" },
+                "$other": { ".validate": false }
+              },
+              "answer": {
+                ".validate": "auth.uid === $sender && newData.hasChildren(['type', 'sdp'])",
+                "type": { ".validate": "newData.val() === 'answer'" },
+                "sdp": { ".validate": "newData.isString() && newData.val().length <= 90000" },
+                "$other": { ".validate": false }
+              },
+              "createdAt": { ".validate": "newData.isNumber() && newData.val() <= now + 1000" },
+              "$other": { ".validate": false }
+            }
+          },
+          "$other": { ".validate": false }
+        }
+      }
+    }
+  }
+}

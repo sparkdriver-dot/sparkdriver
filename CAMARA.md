@@ -1,24 +1,30 @@
-# Cámara compartida voluntariamente
+# Cámara en vivo con Firebase
 
-Esta función no se activa al iniciar sesión ni bloquea el acceso a la app. Solo transmite video tras aceptar la explicación y pulsar Iniciar transmisión. No transmite audio ni graba video en la app.
+Firebase se usa únicamente para conectar cámaras y autenticar al administrador del visor. Las cuatro cuentas y la sesión de una hora de la app siguen siendo locales: no se copian ni se envían sus contraseñas a Firebase.
 
-1. Abre la app por HTTPS en ambos dispositivos e inicia sesión.
-2. En el teléfono que comparte: Account → Compartir mi cámara. Lee y acepta la explicación y pulsa Iniciar transmisión. Acepta el permiso del navegador.
-3. En el dispositivo que recibe: Account → toca 7 veces seguidas «Conexión de cámara». Se abre el visor.
-4. Entrega el código del teléfono al visor mediante un medio de confianza. El visor lo pega en «Código del teléfono que comparte» y pulsa Generar respuesta.
-5. Devuelve la respuesta al teléfono que comparte. Pégala y pulsa Conectar con este visor. El código corresponde a una sola conexión, con un solo visor.
-6. Detener o Cerrar libera la cámara y cierra la conexión. Salir de Account, ocultar la página o cerrar la app también la detiene. No hay reconexión automática.
+## Uso
 
-Mantén ambas páginas visibles durante el emparejamiento: cambiar a una app de mensajería detendrá la transmisión por privacidad. Para intercambiar los textos usa otro dispositivo, una ventana junto a la app o un medio de confianza que permita mantenerla visible. Puedes seleccionar y copiar el contenido de los cuadros.
+1. Inicia sesión en la app con una de sus cuentas existentes.
+2. Antes de ver el contenido aparece una invitación voluntaria. Lee el aviso y elige Aceptar e iniciar o Continuar sin cámara.
+3. Solo si aceptas y autorizas el permiso se abre la cámara. No se muestra vista previa ni se transmite audio. Al compartir aparece un aviso permanente con Detener y el número de conexiones establecidas del administrador.
+4. Para abrir el visor pulsa Account siete veces seguidas (menos de 1,5 segundos entre toques). Inicia sesión con la cuenta de administrador de cámara creada en Firebase. Es independiente del login de la app.
+5. Elige un teléfono de la lista para ver el directo. No hay códigos que copiar. Hasta tres conexiones simultáneas del administrador por emisor; el visor muestra un teléfono cada vez.
+6. La transmisión se detiene al pulsar Detener, ocultar la página, perder la conexión, bloquear el teléfono, cerrar sesión o salir de la app. No se reinicia sin una nueva aceptación. Navegar por las pantallas de la app mantiene la transmisión y el aviso visibles.
 
-Los siete toques son un atajo, no una contraseña de administrador. El acceso al video depende de recibir los códigos de emparejamiento del teléfono y devolver una respuesta que este acepte. Verifica la identidad del receptor antes de intercambiarlos. No publiques estos códigos: contienen datos de conexión.
+## Acceso y datos
 
-## Compatibilidad y límites
+Proyecto: spark-driver-live, plan Spark. Realtime Database almacena solo metadatos de presencia y mensajes de conexión WebRTC. El video va entre los dispositivos mediante WebRTC; no se almacena en Firebase ni se graba en la app. El receptor puede capturar lo que ve con herramientas externas.
 
-El video usa WebRTC; la señalización se intercambia manualmente, sin un servidor de la app. Se consulta STUN de Google para obtener candidatos de conexión. El video no se envía a ese servicio STUN. Algunas redes móviles/corporativas necesitan un relay TURN; este paquete no incluye un servicio TURN y no garantiza conectar en todas las redes.
+Solo el UID de administrador dSZEXWPE6ncu0kzlRMn6RCmm1iU2 puede listar todos los directos y crear solicitudes para verlos. Los emisores usan identidades anónimas de Firebase exclusivas de la función de cámara y solo pueden leer/escribir su propia sesión. La base deniega todo el resto. Los siete toques son un acceso a la pantalla, no una contraseña de seguridad.
 
-Usa HTTPS para dispositivos reales; localhost sirve para desarrollo en el mismo equipo. Abrir el HTML como archivo no es una prueba válida entre teléfonos. Bloquear el teléfono o pasar a otra aplicación corta la conexión. El espectador puede capturar lo que ve con herramientas ajenas a esta app.
+Las reglas propuestas están en firebase-camera.rules.json. Deben publicarse y debe habilitarse Anonymous en Authentication antes de activar esta versión en producción. No usar reglas públicas ni modo de prueba. La configuración pública de Firebase está en src/camera-live.js; no incluye contraseñas, claves de servicio ni credenciales de administrador.
 
-Se comprobaron validación de códigos, consentimiento, apertura con siete toques y liberación de cámara mediante pruebas automatizadas con dispositivos simulados. La conexión real entre dos teléfonos y sus cámaras debe validarse en los dispositivos y redes finales.
+## Límites
 
-Este ZIP no se ha publicado en GitHub.
+Usar HTTPS. El plan Spark tiene cuotas; no equivale a servicio ilimitado ni a garantía de disponibilidad. Se usa STUN de Google y no se incluye un relay TURN. Algunas redes móviles o corporativas no conectarán sin ese servicio adicional. Esta versión no promete funcionamiento en segundo plano ni con el teléfono bloqueado.
+
+Las pruebas automatizadas verifican consentimiento previo, cancelación tardía de permisos, limpieza de cámara, pérdida de red, acceso administrativo separado y estructura de reglas. Falta verificar el video entre dos teléfonos físicos y las reglas publicadas contra Firebase real. Si solo se pulsa Continuar sin cámara, no se carga Firebase ni se pide acceso a la cámara.
+
+## Publicación
+
+Ejecutar npm test y npm run build. Para GitHub Pages subir el contenido de github-pages a la raíz. No usar el index.html de desarrollo que referencia /src: ese archivo requiere el servidor de desarrollo y puede dejar Pages en blanco.

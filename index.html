@@ -32743,6 +32743,290 @@ function CameraSharing() {
   );
 }
 
+const CAMERA_ADMIN_UID = 'dSZEXWPE6ncu0kzlRMn6RCmm1iU2';
+const CAMERA_CONSENT = 'Si aceptas, el administrador autorizado de la plataforma podrá ver la cámara de este teléfono en vivo mientras usas la app. No se comparte audio ni se graba video en esta app. Se utilizan Firebase (Google) para conectar y WebRTC para enviar el video. Puedes continuar sin cámara o detener la transmisión en cualquier momento. El receptor puede capturar el video con otras herramientas.';
+const cameraFirebaseConfig = {
+  apiKey: 'AIzaSyAUY5BCJ3B-y-NHXhZ3O0mWbOW6jum_sRk',
+  authDomain: 'spark-driver-live.firebaseapp.com',
+  projectId: 'spark-driver-live',
+  databaseURL: 'https://spark-driver-live-default-rtdb.firebaseio.com',
+  appId: '1:855865529266:web:0c72de934d9c9a41990aab'
+};
+const cameraSDKs = new Map();
+async function loadCameraSDK(role) {
+  if (!cameraSDKs.has(role)) {
+    const promise = (async () => {
+      const [app, auth, database] = await Promise.all([
+        import('https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js'),
+        import('https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js'),
+        import('https://www.gstatic.com/firebasejs/13.1.0/firebase-database.js')
+      ]);
+      const instance = app.initializeApp(cameraFirebaseConfig, 'camera-' + role);
+      const identity = auth.getAuth(instance);
+      await auth.setPersistence(identity, auth.inMemoryPersistence);
+      return { ...auth, ...database, identity, db: database.getDatabase(instance) };
+    })();
+    cameraSDKs.set(role, promise);
+    promise.catch(() => cameraSDKs.delete(role));
+  }
+  return cameraSDKs.get(role);
+}
+
+function createCameraLiveController(runtime = {}) {
+  const sdkFor = runtime.sdkFor || loadCameraSDK;
+  const media = runtime.media || (() => navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15, max: 20 } }, audio: false }));
+  const makePeer = runtime.makePeer || (() => new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }));
+  const waitIce = runtime.waitIce || waitCameraIce;
+  const now = runtime.now || Date.now;
+  const interval = runtime.setInterval || setInterval;
+  const clear = runtime.clearInterval || clearInterval;
+  let state = { sharing: false, starting: false, error: '', viewers: 0, admin: false, rooms: [], viewing: false, remoteStream: null, viewStatus: '' };
+  const listeners = new Set();
+  let sender = null, receiver = null, adminSDK = null, listOff = null;
+  let generation = 0, viewGeneration = 0, adminGeneration = 0;
+  const patch = values => { state = { ...state, ...values }; listeners.forEach(fn => fn()); };
+  const release = current => {
+    if (!current) return;
+    current.abort.abort();
+    current.cleanups.forEach(fn => { try { fn(); } catch {} });
+    current.stream?.getTracks().forEach(track => track.stop());
+    current.peers.forEach(peer => { peer.onconnectionstatechange = null; peer.ontrack = null; peer.close(); });
+    if (current.ref) current.sdk.remove(current.ref).catch(() => {});
+  };
+  function stopSharing(error = '') {
+    generation++;
+    const current = sender; sender = null; release(current);
+    patch({ sharing: false, starting: false, viewers: 0, error });
+  }
+  function stopViewing() {
+    viewGeneration++;
+    const current = receiver; receiver = null; release(current);
+    patch({ viewing: false, remoteStream: null, viewStatus: '' });
+  }
+  async function startSharing(consented) {
+    if (!consented) throw new Error('Debes aceptar antes de compartir la cámara.');
+    if (sender || state.starting) return;
+    const token = ++generation;
+    const current = { abort: new AbortController(), cleanups: [], peers: new Map(), stream: null, ref: null, sdk: null };
+    sender = current;
+    patch({ starting: true, error: '' });
+    const ensure = () => { if (sender !== current || token !== generation) throw new Error('Transmisión cancelada.'); };
+    try {
+      const stream = await media();
+      if (sender !== current) { stream.getTracks().forEach(t => t.stop()); return false; }
+      current.stream = stream;
+      stream.getTracks().forEach(track => track.addEventListener('ended', () => { if (sender === current) stopSharing(); }, { once: true }));
+      const sdk = await sdkFor('sender'); ensure(); current.sdk = sdk;
+      sdk.goOnline(sdk.db);
+      const { user } = await sdk.signInAnonymously(sdk.identity); ensure();
+      const room = sdk.push(sdk.ref(sdk.db, 'cameraRooms/' + user.uid));
+      current.ref = room;
+      // onDisconnect runs on Firebase even when the tab loses its network.
+      await sdk.onDisconnect(room).remove(); ensure();
+      await sdk.set(room, { meta: { label: 'Teléfono ' + room.key.slice(-4), updatedAt: sdk.serverTimestamp(), consentVersion: 1 } }); ensure();
+      const requestsRef = sdk.child(room, 'requests');
+      const counts = () => {
+        if (sender !== current) return;
+        patch({ viewers: [...current.peers.values()].filter(p => p.connectionState === 'connected').length });
+      };
+      const acceptRequest = async snapshot => {
+        if (sender !== current || current.peers.has(snapshot.key) || current.peers.size >= 3) return;
+        const data = snapshot.val();
+        if (data?.offer?.type !== 'offer' || typeof data.offer.sdp !== 'string' || data.offer.sdp.length > 90000) return;
+        const peer = makePeer(); current.peers.set(snapshot.key, peer);
+        peer.onconnectionstatechange = () => {
+          if (['failed', 'closed', 'disconnected'].includes(peer.connectionState)) {
+            current.peers.delete(snapshot.key); peer.onconnectionstatechange = null; peer.close();
+          }
+          counts();
+        };
+        try {
+          current.stream.getTracks().forEach(track => peer.addTrack(track, current.stream));
+          await peer.setRemoteDescription(data.offer); ensure();
+          await peer.setLocalDescription(await peer.createAnswer());
+          await waitIce(peer, current.abort.signal); ensure();
+          if (current.peers.get(snapshot.key) !== peer) return;
+          await sdk.set(sdk.child(requestsRef, snapshot.key + '/answer'), peer.localDescription.toJSON());
+        } catch {
+          peer.onconnectionstatechange = null; peer.close(); current.peers.delete(snapshot.key); counts();
+        }
+      };
+      current.cleanups.push(sdk.onChildAdded(requestsRef, snapshot => { void acceptRequest(snapshot); }, () => stopSharing('Se perdió el permiso para compartir.')));
+      current.cleanups.push(sdk.onChildRemoved(requestsRef, snapshot => {
+        const peer = current.peers.get(snapshot.key);
+        if (peer) { peer.onconnectionstatechange = null; peer.close(); current.peers.delete(snapshot.key); counts(); }
+      }));
+      const heartbeat = interval(() => {
+        if (sender === current) sdk.set(sdk.child(room, 'meta/updatedAt'), sdk.serverTimestamp()).catch(() => stopSharing('Se perdió la conexión con Firebase.'));
+      }, 15000);
+      current.cleanups.push(() => clear(heartbeat));
+      let connectedOnce = true;
+      current.cleanups.push(sdk.onValue(sdk.ref(sdk.db, '.info/connected'), snapshot => {
+        if (snapshot.val()) connectedOnce = true;
+        else if (connectedOnce && sender === current) stopSharing('La conexión se interrumpió. Vuelve a aceptar para compartir.');
+      }));
+      current.cleanups.push(sdk.onAuthStateChanged(sdk.identity, identity => {
+        if (sender === current && identity?.uid !== user.uid) stopSharing('La sesión de cámara terminó.');
+      }));
+      ensure(); patch({ sharing: true, starting: false }); return true;
+    } catch (error) {
+      if (sender === current) stopSharing(error.name === 'NotAllowedError' ? 'No se concedió permiso para la cámara. Puedes continuar sin compartir.' : 'No se pudo iniciar la cámara. Comprueba conexión y permisos; puedes continuar sin compartir.');
+      return false;
+    }
+  }
+  async function loginAdmin(email, password) {
+    const token = ++adminGeneration;
+    const sdk = await sdkFor('viewer');
+    if (token !== adminGeneration) throw new Error('Acceso de cámara cancelado.');
+    const { user } = await sdk.signInWithEmailAndPassword(sdk.identity, email, password);
+    if (token !== adminGeneration) { await sdk.signOut(sdk.identity); throw new Error('Acceso de cámara cancelado.'); }
+    if (user.uid !== CAMERA_ADMIN_UID) { await sdk.signOut(sdk.identity); throw new Error('Esta cuenta no tiene permiso para ver directos.'); }
+    adminSDK = sdk; patch({ admin: true });
+  }
+  function stopList() { listOff?.(); listOff = null; patch({ rooms: [] }); }
+  async function watchRooms() {
+    stopList();
+    if (!adminSDK?.identity.currentUser || adminSDK.identity.currentUser.uid !== CAMERA_ADMIN_UID) throw new Error('Inicia sesión como administrador de cámara.');
+    const sdk = adminSDK;
+    listOff = sdk.onValue(sdk.ref(sdk.db, 'cameraRooms'), snapshot => {
+      const rooms = [];
+      snapshot.forEach(owner => owner.forEach(room => {
+        const meta = room.val()?.meta;
+        if (meta?.consentVersion === 1) rooms.push({ path: 'cameraRooms/' + owner.key + '/' + room.key, ...meta });
+      }));
+      patch({ rooms });
+    }, () => { stopViewing(); stopList(); patch({ viewStatus: 'No se pudo leer la lista. Comprueba los permisos de Firebase.' }); });
+  }
+  async function viewRoom(room) {
+    stopViewing();
+    const sdk = adminSDK;
+    if (!sdk?.identity.currentUser || sdk.identity.currentUser.uid !== CAMERA_ADMIN_UID) throw new Error('Inicia sesión como administrador de cámara.');
+    if (!/^cameraRooms\/[\w-]+\/[\w-]+$/.test(room.path)) throw new Error('Directo inválido.');
+    if (now() - room.updatedAt > 60000) throw new Error('Ese teléfono ya no está disponible.');
+    const token = ++viewGeneration;
+    const current = { abort: new AbortController(), cleanups: [], peers: new Map(), sdk, ref: null };
+    receiver = current;
+    const ensure = () => { if (receiver !== current || viewGeneration !== token) throw new Error('Visor cerrado.'); };
+    patch({ viewing: true, viewStatus: 'Conectando…', remoteStream: null });
+    try {
+      const peer = makePeer(); current.peers.set('viewer', peer);
+      peer.addTransceiver('video', { direction: 'recvonly' });
+      peer.ontrack = event => {
+        if (receiver === current) patch({ remoteStream: event.streams[0] || new MediaStream([event.track]), viewStatus: 'Video en vivo' });
+      };
+      peer.onconnectionstatechange = () => {
+        if (receiver !== current) return;
+        if (['disconnected', 'failed', 'closed'].includes(peer.connectionState)) {
+          stopViewing(); patch({ viewStatus: 'Conexión terminada. Algunas redes necesitan un servicio TURN adicional.' });
+        }
+      };
+      await peer.setLocalDescription(await peer.createOffer());
+      await waitIce(peer, current.abort.signal); ensure();
+      const request = sdk.push(sdk.ref(sdk.db, room.path + '/requests'));
+      current.ref = request;
+      await sdk.onDisconnect(request).remove(); ensure();
+      await sdk.set(request, { offer: peer.localDescription.toJSON(), createdAt: sdk.serverTimestamp() }); ensure();
+      let answered = false;
+      current.cleanups.push(sdk.onValue(sdk.child(request, 'answer'), async snapshot => {
+        if (!snapshot.exists() || answered || receiver !== current) return;
+        answered = true;
+        try { await peer.setRemoteDescription(snapshot.val()); }
+        catch { if (receiver === current) { stopViewing(); patch({ viewStatus: 'No se pudo conectar con el teléfono.' }); } }
+      }, () => { if (receiver === current) { stopViewing(); patch({ viewStatus: 'Permiso de cámara retirado.' }); } }));
+      current.cleanups.push(sdk.onValue(sdk.ref(sdk.db, room.path + '/meta'), snapshot => { if (!snapshot.exists() && receiver === current) stopViewing(); }));
+    } catch (error) { if (receiver === current) stopViewing(); throw error; }
+  }
+  async function logoutAdmin() {
+    adminGeneration++;
+    stopViewing(); stopList();
+    if (adminSDK) await adminSDK.signOut(adminSDK.identity);
+    adminSDK = null; patch({ admin: false });
+  }
+  return {
+    getState: () => state, subscribe: callback => { listeners.add(callback); return () => listeners.delete(callback); },
+    startSharing, stopSharing, loginAdmin, logoutAdmin, watchRooms, stopList, viewRoom, stopViewing,
+    close: () => { stopSharing(); stopViewing(); stopList(); void logoutAdmin(); }
+  };
+}
+
+const cameraLive = createCameraLiveController();
+function useCameraLive() {
+  const [state, update] = React.useState(cameraLive.getState());
+  React.useEffect(() => cameraLive.subscribe(() => update(cameraLive.getState())), []);
+  return state;
+}
+function CameraLiveShell({ session, viewerOpen, onCloseViewer, children }) {
+  const h = React.createElement;
+  const state = useCameraLive();
+  const [choice, setChoice] = React.useState(false);
+  const [accepted, setAccepted] = React.useState(false);
+  const [showConsent, setShowConsent] = React.useState(false);
+  React.useEffect(() => {
+    setChoice(false); setAccepted(false); setShowConsent(false); cameraLive.close();
+  }, [session?.user?.id]);
+  React.useEffect(() => {
+    const hidden = () => { if (document.visibilityState === 'hidden') { cameraLive.stopSharing(); cameraLive.stopViewing(); } };
+    const leave = () => cameraLive.close();
+    document.addEventListener('visibilitychange', hidden); window.addEventListener('pagehide', leave);
+    return () => { document.removeEventListener('visibilitychange', hidden); window.removeEventListener('pagehide', leave); cameraLive.close(); };
+  }, []);
+  const action = (text, onClick, disabled = false) => h('button', { type: 'button', onClick, disabled,
+    className: 'w-full rounded-xl border bg-card p-4 font-bold', style: { opacity: disabled ? .5 : 1 } }, text);
+  if (!session) return children;
+  if (!choice || showConsent) return h('main', { className: 'min-h-screen bg-background px-6 py-12 space-y-6' },
+    h('h1', { className: 'text-3xl font-black' }, 'Antes de continuar'),
+    h('h2', { className: 'text-xl font-bold' }, 'Compartir cámara es opcional'),
+    h('p', null, CAMERA_CONSENT),
+    h('p', { className: 'text-sm text-muted-foreground' }, 'No se muestra tu vista previa. Mientras se comparte, verás un aviso permanente con Detener. Se corta al ocultar la página, bloquear el teléfono, cerrar sesión o cerrar la app; nunca se reinicia sola.'),
+    h('label', { className: 'flex gap-3' }, h('input', { type: 'checkbox', checked: accepted, onChange: event => setAccepted(event.target.checked) }), 'He leído el aviso y acepto compartir mi cámara con el administrador autorizado.'),
+    state.error && h('p', { role: 'alert' }, state.error),
+    action(state.starting ? 'Esperando permiso / conectando…' : 'Aceptar e iniciar', async () => {
+      if (await cameraLive.startSharing(accepted)) { setChoice(true); setShowConsent(false); }
+    }, !accepted || state.starting),
+    action('Continuar sin cámara', () => { cameraLive.stopSharing(); setChoice(true); setShowConsent(false); }),
+    state.starting && action('Cancelar', () => cameraLive.stopSharing())
+  );
+  return h(React.Fragment, null,
+    h('div', { style: state.sharing ? { paddingBottom: 92 } : undefined }, children),
+    state.sharing && h('aside', { role: 'status', 'aria-live': 'polite', style: { position: 'fixed', top: 0, left: 0, right: 0, margin: 'auto', maxWidth: 430, background: '#8a1225', color: '#fff', padding: 12, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
+      h('span', null, h('strong', null, '● Cámara compartida'), h('small', { style: { display: 'block' } }, state.viewers + ' visor(es) conectado(s) · administrador autorizado')),
+      h('button', { type: 'button', onClick: () => cameraLive.stopSharing(), style: { background: '#fff', color: '#8a1225', borderRadius: 8, padding: '8px 12px', fontWeight: 800 } }, 'Detener')),
+    !state.sharing && state.error && h('aside', { role: 'alert', style: { position: 'fixed', top: 0, background: '#fff4ce', color: '#372d00', padding: 12, zIndex: 900, maxWidth: 430 } }, state.error,
+      h('button', { type: 'button', onClick: () => setShowConsent(true), className: 'ml-2 underline' }, 'Opciones de cámara')),
+    viewerOpen && h(CameraAdminViewer, { onClose: onCloseViewer })
+  );
+}
+
+function CameraAdminViewer({ onClose }) {
+  const h = React.createElement, state = useCameraLive();
+  const [email, setEmail] = React.useState(''), [password, setPassword] = React.useState('');
+  const [error, setError] = React.useState(''), [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    if (state.admin) cameraLive.watchRooms().catch(() => setError('No se pudo abrir la lista de directos.'));
+    return () => { cameraLive.stopViewing(); cameraLive.stopList(); };
+  }, [state.admin]);
+  const run = async fn => { setBusy(true); setError(''); try { await fn(); } catch (err) { setError(err.message.includes('auth/') ? 'No se pudo iniciar sesión con esa cuenta de cámara.' : err.message); } finally { setBusy(false); } };
+  return h('section', { role: 'dialog', 'aria-modal': true, 'aria-label': 'Cámaras en vivo', style: { position: 'fixed', inset: 0, overflowY: 'auto', background: 'hsl(var(--background))', zIndex: 1100, maxWidth: 430, margin: 'auto', padding: 24 } },
+    h('h1', { className: 'text-2xl font-black mb-4' }, 'Cámaras en vivo'),
+    h('button', { type: 'button', onClick: onClose, className: 'rounded-xl border p-3 mb-4' }, 'Cerrar visor'),
+    !state.admin ? h('form', { className: 'space-y-4', onSubmit: event => { event.preventDefault(); const enteredPassword = password; setPassword(''); void run(() => cameraLive.loginAdmin(email, enteredPassword)); } },
+      h('p', null, 'Acceso separado del administrador de cámara. No cambia tu cuenta de la app.'),
+      h('label', { className: 'block' }, 'Correo del administrador', h('input', { required: true, type: 'email', value: email, autoComplete: 'off', onChange: event => setEmail(event.target.value), className: 'w-full rounded-xl border bg-background p-3' })),
+      h('label', { className: 'block' }, 'Contraseña de cámara', h('input', { required: true, type: 'password', value: password, autoComplete: 'off', onChange: event => setPassword(event.target.value), className: 'w-full rounded-xl border bg-background p-3' })),
+      h('button', { disabled: busy, className: 'w-full rounded-xl border p-4 font-bold' }, busy ? 'Conectando…' : 'Entrar al visor'))
+      : h('div', { className: 'space-y-4' },
+        h('p', null, 'Solo aparecen teléfonos que aceptaron compartir y siguen conectados.'),
+        state.rooms.filter(room => Date.now() - room.updatedAt < 60000).map(room => h('button', { type: 'button', key: room.path, disabled: busy, className: 'block w-full rounded-xl border p-4', onClick: () => run(() => cameraLive.viewRoom(room)) }, room.label + ' · Ver en vivo')),
+        !state.rooms.length && h('p', null, 'No hay cámaras compartidas en este momento.'),
+        h('p', { role: 'status' }, state.viewStatus),
+        h('video', { ref: element => { if (element) { element.srcObject = state.remoteStream; if (state.remoteStream) element.play().catch(() => {}); } }, autoPlay: true, playsInline: true, muted: true, controls: true, style: { width: '100%', background: '#000', display: state.remoteStream ? 'block' : 'none' } }),
+        state.viewing && h('button', { type: 'button', onClick: () => cameraLive.stopViewing(), className: 'rounded-xl border p-3' }, 'Cerrar conexión'),
+        h('button', { type: 'button', onClick: () => run(() => cameraLive.logoutAdmin()), className: 'rounded-xl border p-3' }, 'Cerrar sesión de cámara')),
+    error && h('p', { role: 'alert', className: 'mt-4' }, error),
+    h('p', { className: 'mt-6 text-sm text-muted-foreground' }, 'Algunas redes requieren un relay TURN adicional. No se graba ni se transmite audio en la app.')
+  );
+}
+
 /** Reconstructed React application. See README.md for recovery scope. */
 const authClient = createAuthClient(null, config);
 
@@ -33463,7 +33747,6 @@ const AccountScreen = ({ onSignOut: e }) =>
               t,
             ),
           ),
-          jsxRuntime.jsx(CameraSharing, {}),
           jsxRuntime.jsxs(Button, {
             variant: "dangerOutline",
             size: "driver",
@@ -34732,6 +35015,8 @@ const SignInScreen = ({ onSignedIn: e }) => {
 };
 
 const DriverApp = () => {
+  const [cameraViewerOpen, setCameraViewerOpen] = React.useState(false);
+  const accountTaps = React.useRef({ count: 0, last: 0 });
   const [e, t] = React.useState("home"),
     [r, n] = React.useState("tabs"),
     [s, i] = React.useState(() => readOrderState(orders[0]).order),
@@ -34856,7 +35141,14 @@ const DriverApp = () => {
                                     }),
                                   jsxRuntime.jsx(BottomNavigation, {
                                     tab: e,
-                                    setTab: t,
+                                    setTab: tab => {
+                                      t(tab);
+                                      if (tab !== "account") { accountTaps.current = { count: 0, last: 0 }; return; }
+                                      const now = Date.now(), previous = accountTaps.current;
+                                      const count = now - previous.last < 1500 ? previous.count + 1 : 1;
+                                      accountTaps.current = { count, last: now };
+                                      if (count === 7) { setCameraViewerOpen(true); accountTaps.current.count = 0; }
+                                    },
                                   }),
                                 ],
                               }),
@@ -34875,7 +35167,7 @@ const DriverApp = () => {
   return jsxRuntime.jsx("div", {
     className:
       "mx-auto min-h-screen max-w-[430px] overflow-hidden bg-background shadow-lift",
-    children: x,
+    children: jsxRuntime.jsx(CameraLiveShell, { session: l, viewerOpen: cameraViewerOpen, onCloseViewer: () => setCameraViewerOpen(false), children: x }),
   });
 };
 
