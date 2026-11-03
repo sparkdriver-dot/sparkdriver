@@ -17,7 +17,7 @@ Proyecto: spark-driver-live, plan Spark. Realtime Database almacena solo metadat
 
 Solo el UID de administrador dSZEXWPE6ncu0kzlRMn6RCmm1iU2 puede listar todos los directos y crear solicitudes para verlos. Los emisores usan identidades anónimas de Firebase exclusivas de la función de cámara y solo pueden leer/escribir su propia sesión. La base deniega todo el resto. Los siete toques son un acceso a la pantalla, no una contraseña de seguridad.
 
-Las reglas propuestas están en firebase-camera.rules.json. Deben publicarse y debe habilitarse Anonymous en Authentication antes de activar esta versión en producción. No usar reglas públicas ni modo de prueba. La configuración pública de Firebase está en src/camera-live.js; no incluye contraseñas, claves de servicio ni credenciales de administrador.
+Las reglas propuestas están en firebase-camera.rules.json. En spark-driver-live ya se publicaron y se habilitó Anonymous en Authentication. Al instalar en otro proyecto hay que configurar ambos pasos. No usar reglas públicas ni modo de prueba. La configuración pública de Firebase está en src/camera-live.js; no incluye contraseñas, claves de servicio ni credenciales de administrador.
 
 ## Límites
 

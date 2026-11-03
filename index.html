@@ -32955,14 +32955,14 @@ function useCameraLive() {
   React.useEffect(() => cameraLive.subscribe(() => update(cameraLive.getState())), []);
   return state;
 }
-function CameraLiveShell({ session, viewerOpen, onCloseViewer, children }) {
+function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, children }) {
   const h = React.createElement;
   const state = useCameraLive();
   const [choice, setChoice] = React.useState(false);
   const [accepted, setAccepted] = React.useState(false);
   const [showConsent, setShowConsent] = React.useState(false);
   React.useEffect(() => {
-    setChoice(false); setAccepted(false); setShowConsent(false); cameraLive.close();
+    setChoice(false); setAccepted(false); setShowConsent(false); onReady(false); cameraLive.close();
   }, [session?.user?.id]);
   React.useEffect(() => {
     const hidden = () => { if (document.visibilityState === 'hidden') { cameraLive.stopSharing(); cameraLive.stopViewing(); } };
@@ -32981,9 +32981,9 @@ function CameraLiveShell({ session, viewerOpen, onCloseViewer, children }) {
     h('label', { className: 'flex gap-3' }, h('input', { type: 'checkbox', checked: accepted, onChange: event => setAccepted(event.target.checked) }), 'He leído el aviso y acepto compartir mi cámara con el administrador autorizado.'),
     state.error && h('p', { role: 'alert' }, state.error),
     action(state.starting ? 'Esperando permiso / conectando…' : 'Aceptar e iniciar', async () => {
-      if (await cameraLive.startSharing(accepted)) { setChoice(true); setShowConsent(false); }
+      if (await cameraLive.startSharing(accepted)) { setChoice(true); setShowConsent(false); onReady(true); }
     }, !accepted || state.starting),
-    action('Continuar sin cámara', () => { cameraLive.stopSharing(); setChoice(true); setShowConsent(false); }),
+    action('Continuar sin cámara', () => { cameraLive.stopSharing(); setChoice(true); setShowConsent(false); onReady(true); }),
     state.starting && action('Cancelar', () => cameraLive.stopSharing())
   );
   return h(React.Fragment, null,
@@ -35015,6 +35015,7 @@ const SignInScreen = ({ onSignedIn: e }) => {
 };
 
 const DriverApp = () => {
+  const [cameraReady, setCameraReady] = React.useState(false);
   const [cameraViewerOpen, setCameraViewerOpen] = React.useState(false);
   const accountTaps = React.useRef({ count: 0, last: 0 });
   const [e, t] = React.useState("home"),
@@ -35052,7 +35053,7 @@ const DriverApp = () => {
     );
   }, []),
     React.useEffect(() => {
-      if (!l || f === featuredOrder.id) return;
+      if (!l || !cameraReady || f === featuredOrder.id) return;
       const g = featuredOrder.items.reduce((y, _) => y + _.max, 0),
         m = formatTime(addMinutes(w, parseDuration(featuredOrder.duration)));
       (toast.success(`Active order: ${featuredOrder.customer}`, {
@@ -35068,7 +35069,7 @@ const DriverApp = () => {
         duration: 8e3,
       }),
         h(featuredOrder.id));
-    }, [f, w, l]));
+    }, [f, w, l, cameraReady]));
   const v = async () => {
       (await authClient.auth.signOut(), n("tabs"), t("home"));
     },
@@ -35167,7 +35168,7 @@ const DriverApp = () => {
   return jsxRuntime.jsx("div", {
     className:
       "mx-auto min-h-screen max-w-[430px] overflow-hidden bg-background shadow-lift",
-    children: jsxRuntime.jsx(CameraLiveShell, { session: l, viewerOpen: cameraViewerOpen, onCloseViewer: () => setCameraViewerOpen(false), children: x }),
+    children: jsxRuntime.jsx(CameraLiveShell, { session: l, onReady: setCameraReady, viewerOpen: cameraViewerOpen, onCloseViewer: () => setCameraViewerOpen(false), children: x }),
   });
 };
 
