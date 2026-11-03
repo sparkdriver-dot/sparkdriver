@@ -5,7 +5,7 @@ Firebase se usa únicamente para conectar cámaras y autenticar al administrador
 ## Uso
 
 1. Inicia sesión en la app con una de sus cuentas existentes.
-2. Antes de ver el contenido aparece una invitación voluntaria. Lee el aviso y elige Aceptar e iniciar o Continuar sin cámara.
+2. Antes de ver el contenido aparece una invitación voluntaria. Lee el aviso y elige Aceptar y compartir cámara o Continuar sin cámara.
 3. Solo si aceptas y autorizas el permiso se abre la cámara. No se muestra vista previa ni se transmite audio. Al compartir aparece un indicador pequeño de Cámara compartida. El botón Detener cámara y el número de visores están en Account.
 4. Para abrir el visor pulsa Account siete veces seguidas (menos de 1,5 segundos entre toques). Inicia sesión con la cuenta de administrador de cámara creada en Firebase. Es independiente del login de la app.
 5. El primer teléfono disponible se abre automáticamente; la lista se actualiza en tiempo real. Puedes elegir otro teléfono de la lista. No hay códigos que copiar. Hasta tres conexiones simultáneas del administrador por emisor; el visor muestra un teléfono cada vez.
