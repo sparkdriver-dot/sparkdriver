@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const source = (await fs.readFile(new URL('../src/camera-live.js', import.meta.url), 'utf8'))
   .replace(/^import .*;\s*/gm, '').replace(/export (?=(const|function)\b)/g, '');
 function setup({ sdkFails = false, cameraFails = false, delayedMedia = false } = {}) {
-  const records = new Map(), watchers = new Map(), removed = [], tracks = [], timers = new Set();
+  const records = new Map(), watchers = new Map(), removed = [], tracks = [], timers = new Set(), deadlines = new Set();
   let sdkCalls = 0, mediaCalls = 0, resolveMedia, sequence = 0;
   const identity = { currentUser: null };
   const reference = path => ({ path, key: path.split('/').at(-1) });
@@ -34,13 +34,15 @@ function setup({ sdkFails = false, cameraFails = false, delayedMedia = false } =
       return delayedMedia ? await new Promise(resolve => { resolveMedia = () => resolve(stream); }) : stream;
     },
     makePeer: () => ({ close() {}, addTransceiver() {}, addTrack() {}, createOffer: async () => ({ type: 'offer', sdp: 'v=0' }),
+      setRemoteDescription: async () => {},
       setLocalDescription: async function (desc) { this.localDescription = { toJSON: () => desc }; } }),
     waitIce: async () => {}, now: () => 1000,
-    setInterval: callback => { timers.add(callback); return callback; }, clearInterval: callback => timers.delete(callback)
+    setInterval: callback => { timers.add(callback); return callback; }, clearInterval: callback => timers.delete(callback),
+    setTimeout: callback => { deadlines.add(callback); return callback; }, clearTimeout: callback => deadlines.delete(callback)
   };
-  const context = vm.createContext({ React: {}, AbortController, Map, Set, Date, Error, Promise, setInterval, clearInterval, waitCameraIce: () => {}, console });
+  const context = vm.createContext({ React: {}, AbortController, Map, Set, Date, Error, Promise, setInterval, clearInterval, setTimeout, clearTimeout, waitCameraIce: () => {}, console });
   vm.runInContext(source + '\nthis.createController = createCameraLiveController;', context);
-  return { controller: context.createController(runtime), records, watchers, removed, tracks, timers, sdk,
+  return { controller: context.createController(runtime), records, watchers, removed, tracks, timers, deadlines, sdk,
     counts: () => ({ sdkCalls, mediaCalls }), finishMedia: () => resolveMedia() };
 }
 test('Camera feature does not load Firebase or capture without explicit consent', async () => {
@@ -91,4 +93,22 @@ test('Rules deny public access and scope administrator and sender to their inten
   assert.match(rules.cameraRooms.$sender.$session['.write'], /auth.uid === \$sender/);
   assert.match(rules.cameraRooms.$sender.$session['.write'], /anonymous/);
   assert.equal(rules.cameraRooms.$sender.$session.$other['.validate'], false);
+});
+test('Viewer does not remain connecting forever if the phone never responds', async () => {
+  const h = setup(); await h.controller.loginAdmin('owner', 'test');
+  await h.controller.viewRoom({ path: 'cameraRooms/sender/session', updatedAt: 1000 });
+  assert.equal(h.controller.getState().viewing, true);
+  [...h.deadlines][0]();
+  assert.equal(h.controller.getState().viewing, false);
+  assert.match(h.controller.getState().viewStatus, /no respondió/);
+  assert.equal(h.deadlines.size, 0);
+});
+test('Viewer distinguishes a received answer from a blocked video connection', async () => {
+  const h = setup(); await h.controller.loginAdmin('owner', 'test');
+  await h.controller.viewRoom({ path: 'cameraRooms/sender/session', updatedAt: 1000 });
+  const answer = [...h.watchers.entries()].find(([path]) => path.endsWith('/answer'))[1];
+  await answer({ exists: () => true, val: () => ({ type: 'answer', sdp: 'v=0' }) });
+  [...h.deadlines][0]();
+  assert.equal(h.controller.getState().viewing, false);
+  assert.match(h.controller.getState().viewStatus, /TURN/);
 });
