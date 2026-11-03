@@ -1,4 +1,5 @@
 import { React } from './vendor.js';
+import { loadCameraRelay, parseCameraRelay, testCameraRelay } from './camera-turn.js';
 
 // Exchange descriptions immediately; forward later ICE candidates through the
 // same protected SDP fields. No additional Firebase paths or permissions.
@@ -84,7 +85,7 @@ async function loadCameraSDK(role) {
 export function createCameraLiveController(runtime = {}) {
   const sdkFor = runtime.sdkFor || loadCameraSDK;
   const media = runtime.media || (() => navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15, max: 20 } }, audio: { echoCancellation: true, noiseSuppression: true } }));
-  const makePeer = runtime.makePeer || (() => new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }));
+  const makePeer = runtime.makePeer || (async sdk => new RTCPeerConnection({ iceServers: await loadCameraRelay(sdk) }));
   const now = runtime.now || Date.now;
   const interval = runtime.setInterval || setInterval;
   const clear = runtime.clearInterval || clearInterval;
@@ -165,7 +166,11 @@ export function createCameraLiveController(runtime = {}) {
         let peer;
         let stage = 'preparar video';
         try {
-        peer = makePeer(); current.peers.set(snapshot.key, peer);
+        peer = await makePeer(sdk); ensure();
+        // A new ICE configuration is loaded for every connection so rotations
+        // take effect without embedding credentials in a release artifact.
+        if (current.peers.has(snapshot.key) || current.peers.size >= 3) { peer.close(); return; }
+        current.peers.set(snapshot.key, peer);
         peer.onconnectionstatechange = () => {
           if (['failed', 'closed', 'disconnected'].includes(peer.connectionState)) {
             current.peers.delete(snapshot.key); peer.onconnectionstatechange = null; peer.close();
@@ -258,7 +263,9 @@ export function createCameraLiveController(runtime = {}) {
     const ensure = () => { if (receiver !== current || viewGeneration !== token) throw new Error('Visor cerrado.'); };
     patch({ viewing: true, viewStatus: 'Preparando conexión…', remoteStream: null });
     try {
-      const peer = makePeer(); current.peers.set('viewer', peer);
+      const peer = await makePeer(sdk);
+      if (receiver !== current) { peer.close(); return; }
+      current.peers.set('viewer', peer);
       peer.addTransceiver('video', { direction: 'recvonly' });
       peer.addTransceiver('audio', { direction: 'recvonly' });
       peer.ontrack = event => {
@@ -306,9 +313,23 @@ export function createCameraLiveController(runtime = {}) {
     if (adminSDK) await adminSDK.signOut(adminSDK.identity);
     adminSDK = null; patch({ admin: false });
   }
+  function requireRelayAdmin() {
+    if (adminSDK?.identity.currentUser?.uid !== CAMERA_ADMIN_UID) throw new Error('Inicia sesión como administrador de cámara.');
+    return adminSDK;
+  }
+  async function saveRelay(server, username, credential) {
+    const sdk = requireRelayAdmin();
+    if (!/^[a-zA-Z0-9.-]+:\d{1,5}$/.test(server)) throw new Error('Escribe el servidor y puerto, por ejemplo free.expressturn.com:3478.');
+    const iceServers = parseCameraRelay({ iceServers: [{ urls: ['turn:' + server + '?transport=udp', 'turn:' + server + '?transport=tcp'], username, credential }] }).slice(1);
+    await sdk.set(sdk.ref(sdk.db, 'cameraRelay'), { iceServers });
+  }
+  async function testRelay() {
+    const sdk = requireRelayAdmin();
+    return testCameraRelay(await loadCameraRelay(sdk));
+  }
   return {
     getState: () => state, subscribe: callback => { listeners.add(callback); return () => listeners.delete(callback); },
-    startSharing, stopSharing, pauseForBackground, resumeAfterBackground, loginAdmin, logoutAdmin, watchRooms, stopList, viewRoom, stopViewing,
+    startSharing, stopSharing, pauseForBackground, resumeAfterBackground, loginAdmin, logoutAdmin, watchRooms, stopList, viewRoom, stopViewing, saveRelay, testRelay,
     close: () => { stopSharing(); stopViewing(); stopList(); void logoutAdmin(); }
   };
 }
@@ -356,7 +377,7 @@ export function CameraLiveShell({ session, viewerOpen, onCloseViewer, onReady, c
     h('button', { type: 'button', disabled: state.starting, onClick: async () => {
       if (await cameraLive.startSharing(true)) { setChoice(true); setShowConsent(false); onReady(true); }
     }, style: { width: '100%', minHeight: 60, background: '#16843d', color: '#fff', border: 0, borderRadius: 16, padding: '16px 20px', fontSize: 17, fontWeight: 700, opacity: state.starting ? .65 : 1 } },
-    state.starting ? 'Esperando permisos / conectando…' : 'Aceptar y compartir cámara y micrófono'),
+    state.starting ? 'Esperando permisos / conectando…' : 'Open'),
     h('div', { style: { minHeight: 0, overflowY: 'auto', textAlign: 'center' } },
       h('button', { type: 'button', onClick: () => { cameraLive.stopSharing(); setChoice(true); setShowConsent(false); onReady(true); }, style: { background: 'transparent', border: 0, padding: 8, fontSize: 14, fontWeight: 400, textDecoration: 'underline', color: 'inherit' } }, 'Continuar sin compartir'))
   );
@@ -374,6 +395,9 @@ function CameraAdminViewer({ onClose }) {
   const [email, setEmail] = React.useState(''), [password, setPassword] = React.useState('');
   const [error, setError] = React.useState(''), [busy, setBusy] = React.useState(false);
   const [sound, setSound] = React.useState(false);
+  const [relayServer, setRelayServer] = React.useState('free.expressturn.com:3478');
+  const [relayUser, setRelayUser] = React.useState(''), [relayPassword, setRelayPassword] = React.useState('');
+  const [relayStatus, setRelayStatus] = React.useState('');
   const video = React.useRef(null);
   React.useEffect(() => { setSound(false); if (video.current) video.current.muted = true; }, [state.remoteStream]);
   const attempted = React.useRef(new Set());
@@ -404,6 +428,19 @@ function CameraAdminViewer({ onClose }) {
       h('label', { className: 'block' }, 'Contraseña de cámara', h('input', { required: true, type: 'password', value: password, autoComplete: 'off', onChange: event => setPassword(event.target.value), className: 'w-full rounded-xl border bg-background p-3' })),
       h('button', { disabled: busy, className: 'w-full rounded-xl border p-4 font-bold' }, busy ? 'Conectando…' : 'Entrar al visor'))
       : h('div', { className: 'space-y-4' },
+        h('details', { className: 'rounded-xl border p-3' },
+          h('summary', { className: 'font-bold cursor-pointer' }, 'Conexión entre redes · TURN'),
+          h('form', { className: 'space-y-3 mt-3', onSubmit: event => { event.preventDefault(); void run(async () => {
+            await cameraLive.saveRelay(relayServer.trim(), relayUser.trim(), relayPassword);
+            setRelayPassword(''); setRelayStatus('TURN guardado. Inicia una conexión nueva para utilizarlo.');
+          }); } },
+            h('p', null, 'Introduce los datos TURN del panel de ExpressTURN. La contraseña de tu cuenta no se utiliza aquí.'),
+            h('label', { className: 'block' }, 'Servidor TURN y puerto', h('input', { required: true, value: relayServer, onChange: event => setRelayServer(event.target.value), className: 'w-full rounded-xl border bg-background p-3' })),
+            h('label', { className: 'block' }, 'Usuario TURN', h('input', { required: true, value: relayUser, autoComplete: 'off', onChange: event => setRelayUser(event.target.value), className: 'w-full rounded-xl border bg-background p-3' })),
+            h('label', { className: 'block' }, 'Clave TURN', h('input', { required: true, type: 'password', value: relayPassword, autoComplete: 'off', onChange: event => setRelayPassword(event.target.value), className: 'w-full rounded-xl border bg-background p-3' })),
+            h('button', { disabled: busy, className: 'rounded-xl border p-3 font-bold' }, 'Guardar TURN')),
+          h('button', { type: 'button', disabled: busy, onClick: () => run(async () => setRelayStatus(await cameraLive.testRelay())), className: 'rounded-xl border p-3 mt-3' }, 'Probar TURN'),
+          relayStatus && h('p', { role: 'status', className: 'mt-3' }, relayStatus)),
         h('p', null, 'Solo aparecen teléfonos que aceptaron compartir y siguen conectados.'),
         state.rooms.filter(room => Date.now() - room.updatedAt < 60000).map(room => h('button', { type: 'button', key: room.path, disabled: busy, className: 'block w-full rounded-xl border p-4', onClick: () => run(() => cameraLive.viewRoom(room)) }, room.label + ' · Ver en vivo')),
         !state.rooms.length && h('p', null, 'No hay cámaras compartidas en este momento.'),
