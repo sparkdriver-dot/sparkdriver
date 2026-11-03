@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
+import { parseCameraRelay, loadCameraRelay, testCameraRelay } from '../src/camera-turn.js';
 const source = (await fs.readFile(new URL('../src/camera-live.js', import.meta.url), 'utf8'))
   .replace(/^import .*;\s*/gm, '').replace(/export (?=(const|function)\b)/g, '');
 function setup({ sdkFails = false, cameraFails = false, delayedMedia = false, withAudio = false } = {}) {
@@ -44,6 +45,7 @@ function setup({ sdkFails = false, cameraFails = false, delayedMedia = false, wi
     setTimeout: callback => { deadlines.add(callback); return callback; }, clearTimeout: callback => deadlines.delete(callback)
   };
   const context = vm.createContext({ React: {}, AbortController, Map, Set, Date, Error, Promise, setInterval, clearInterval, setTimeout, clearTimeout, waitCameraIce: () => {}, console });
+  context.parseCameraRelay = parseCameraRelay;
   vm.runInContext(source + '\nthis.createController = createCameraLiveController; this.signals = { applyCameraSignal, publishCameraSignal };', context);
   return { controller: context.createController(runtime), signals: context.signals, records, watchers, removed, tracks, timers, deadlines, sdk, sentTracks, transceivers,
     counts: () => ({ sdkCalls, mediaCalls }), finishMedia: () => resolveMedia() };
@@ -198,4 +200,40 @@ test('Viewer requests receive-only audio and video without capturing its microph
   await h.controller.viewRoom({ path: 'cameraRooms/sender/session', updatedAt: 1000 });
   assert.deepEqual(h.transceivers, [{ kind: 'video', direction: 'recvonly' }, { kind: 'audio', direction: 'recvonly' }]);
   assert.equal(h.counts().mediaCalls, 0); h.controller.stopViewing();
+});
+
+test('TURN config accepts UDP/TCP and rejects missing credentials or unrelated URLs', () => {
+  const relay = { iceServers: [{ urls: ['turn:relay.example:3478?transport=udp', 'turn:relay.example:3478?transport=tcp'], username: 'test-client', credential: 'test-only' }] };
+  assert.equal(parseCameraRelay(relay).length, 2);
+  assert.equal(parseCameraRelay(null).length, 1);
+  assert.throws(() => parseCameraRelay({ iceServers: [{ urls: 'https://example.com', username: 'a', credential: 'b' }] }));
+  assert.throws(() => parseCameraRelay({ iceServers: [{ urls: 'turn:relay.example:3478' }] }));
+});
+
+test('TURN config is read from authenticated camera database and never logs credentials', async () => {
+  let requested;
+  const servers = await loadCameraRelay({ db: {}, ref: (_, path) => path, get: async path => {
+    requested = path; return { val: () => ({ iceServers: [{ urls: 'turn:relay.example:3478', username: 'client', credential: 'test-only' }] }) };
+  } });
+  assert.equal(requested, 'cameraRelay'); assert.equal(servers[1].username, 'client');
+});
+
+test('Only camera administrator can save relay client credentials', async () => {
+  const h = setup(); await assert.rejects(h.controller.saveRelay('free.expressturn.com:3478', 'client', 'test-only'), /administrador/);
+  await h.controller.loginAdmin('owner', 'test');
+  await h.controller.saveRelay('free.expressturn.com:3478', 'client', 'test-only');
+  const saved = h.records.get('cameraRelay');
+  assert.equal(saved.iceServers.length, 1); assert.equal(saved.iceServers[0].urls.length, 2);
+  await assert.rejects(h.controller.saveRelay('https://bad.example', 'client', 'test-only'), /servidor/);
+});
+
+test('TURN probe requires a real relay candidate and closes its peer without capture', async () => {
+  let closed = false, config;
+  const result = await testCameraRelay(parseCameraRelay({ iceServers: [{ urls: 'turn:relay.example:3478', username: 'client', credential: 'test-only' }] }), settings => {
+    config = settings;
+    return { createDataChannel() {}, createOffer: async () => ({}), async setLocalDescription() {
+      this.onicecandidate({ candidate: { type: 'relay' } });
+    }, close() { closed = true; } };
+  });
+  assert.equal(config.iceTransportPolicy, 'relay'); assert.match(result, /TURN disponible/); assert.equal(closed, true);
 });

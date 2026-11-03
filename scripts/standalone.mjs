@@ -7,7 +7,7 @@ const exports=vendor.match(/\nexport \{([\s\S]*?)\};\s*$/);
 if(!exports) throw Error('Missing dependency exports');
 const aliases=exports[1].split(',').map(part=>part.trim().split(/\s+as\s+/)).filter(parts=>parts.length===2&&parts[0]!==parts[1]).map(([original,alias])=>`const ${alias} = ${original};`).join('\n');
 vendor=vendor.slice(0,exports.index)+'\n'+aliases;
-const files=['data/accounts.js','config.js','data/assets.js','data/orders.js','lib/utils.js','lib/local-edits.js','auth.js','editors.js','camera-sharing.js','camera-live.js','app.js'];
+const files=['data/accounts.js','config.js','data/assets.js','data/orders.js','lib/utils.js','lib/local-edits.js','auth.js','editors.js','camera-sharing.js','camera-turn.js','camera-live.js','app.js'];
 let code=vendor+'\n';
 for(const name of files){
  let content=await fs.readFile(path.join(root,'src',name),'utf8');
