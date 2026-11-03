@@ -21,6 +21,7 @@ function setup({ sdkFails = false, cameraFails = false, delayedMedia = false } =
     set: async (ref, value) => { records.set(ref.path, value); },
     remove: async ref => { removed.push(ref.path); records.delete(ref.path); },
     onChildAdded: (ref, callback) => { watchers.set(ref.path + ':add', callback); return () => watchers.delete(ref.path + ':add'); },
+    onChildChanged: (ref, callback) => { watchers.set(ref.path + ':change', callback); return () => watchers.delete(ref.path + ':change'); },
     onChildRemoved: (ref, callback) => { watchers.set(ref.path + ':remove', callback); return () => watchers.delete(ref.path + ':remove'); },
     onValue: (ref, callback) => { if (ref.path === '.info/connected') callback({ val: () => true }); watchers.set(ref.path, callback); return () => watchers.delete(ref.path); },
     onAuthStateChanged: (_, callback) => { callback(identity.currentUser); return () => {}; }
@@ -41,8 +42,8 @@ function setup({ sdkFails = false, cameraFails = false, delayedMedia = false } =
     setTimeout: callback => { deadlines.add(callback); return callback; }, clearTimeout: callback => deadlines.delete(callback)
   };
   const context = vm.createContext({ React: {}, AbortController, Map, Set, Date, Error, Promise, setInterval, clearInterval, setTimeout, clearTimeout, waitCameraIce: () => {}, console });
-  vm.runInContext(source + '\nthis.createController = createCameraLiveController;', context);
-  return { controller: context.createController(runtime), records, watchers, removed, tracks, timers, deadlines, sdk,
+  vm.runInContext(source + '\nthis.createController = createCameraLiveController; this.signals = { applyCameraSignal, publishCameraSignal };', context);
+  return { controller: context.createController(runtime), signals: context.signals, records, watchers, removed, tracks, timers, deadlines, sdk,
     counts: () => ({ sdkCalls, mediaCalls }), finishMedia: () => resolveMedia() };
 }
 test('Camera feature does not load Firebase or capture without explicit consent', async () => {
@@ -143,4 +144,40 @@ test('Sender answers a viewer request and exposes a sanitized Firebase failure',
   assert.doesNotMatch(h.controller.getState().error, /private SDP/);
   assert.equal(h.controller.getState().sharing, true);
   h.controller.stopSharing();
+});
+
+test('A gathering browser sends its offer without waiting for ICE completion', async () => {
+  const h = setup(); await h.controller.loginAdmin('owner', 'test');
+  await h.controller.viewRoom({ path: 'cameraRooms/sender/session', updatedAt: 1000 });
+  assert.ok([...h.records.values()].some(value => value.offer?.type === 'offer'));
+  assert.match(h.controller.getState().viewStatus, /Esperando respuesta/);
+  h.controller.stopViewing();
+});
+
+test('Late ICE candidates are applied once without renegotiating the remote description', async () => {
+  const h = setup(), calls = [], candidates = [];
+  const peer = { setRemoteDescription: async value => calls.push(value), addIceCandidate: async value => candidates.push(value) };
+  const initial = { type: 'offer', sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' };
+  const updated = { ...initial, sdp: initial.sdp + 'a=candidate:test 1 UDP 1 192.0.2.1 1234 typ host\r\na=end-of-candidates\r\n' };
+  await Promise.all([h.signals.applyCameraSignal(peer, initial), h.signals.applyCameraSignal(peer, updated), h.signals.applyCameraSignal(peer, updated)]);
+  assert.equal(calls.length, 1); assert.equal(candidates.length, 2);
+  assert.equal(candidates[0].sdpMid, '0'); assert.equal(candidates[0].sdpMLineIndex, 0);
+  assert.equal(candidates[1].candidate, '');
+});
+
+test('ICE updates are buffered until initial publication and stop with the connection', async () => {
+  const h = setup(), writes = []; let active = true;
+  const first = { type: 'answer', sdp: 'first' };
+  let description = first;
+  const peer = { localDescription: { toJSON: () => description } };
+  const signal = h.signals.publishCameraSignal(peer, async value => writes.push(value.sdp), () => active, error => { throw error; });
+  description = { ...first, sdp: 'late' }; peer.onicecandidate();
+  assert.equal(writes.length, 0);
+  signal.start(first); peer.onicecandidate();
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  assert.deepEqual(writes, ['late']);
+  active = false; description = { ...first, sdp: 'after close' }; peer.onicecandidate();
+  signal.stop(); assert.equal(peer.onicecandidate, null);
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  assert.deepEqual(writes, ['late']);
 });
